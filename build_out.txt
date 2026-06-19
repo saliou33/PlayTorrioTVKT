@@ -1,0 +1,60 @@
+﻿Starting a Gradle Daemon, 1 incompatible and 8 stopped Daemons could not be reused, use --status for details
+WARNING: The following problems were found when resolving the SDK location:
+Where: ANDROID_SDK_ROOT environment variable. Problem: Directory does not exist
+
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:generateDebugBuildConfig UP-TO-DATE
+> Task :app:checkDebugAarMetadata UP-TO-DATE
+> Task :app:generateDebugResValues UP-TO-DATE
+> Task :app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:mergeDebugResources UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:extractDeepLinksDebug UP-TO-DATE
+> Task :app:processDebugMainManifest UP-TO-DATE
+> Task :app:processDebugManifest UP-TO-DATE
+> Task :app:processDebugManifestForPackage UP-TO-DATE
+> Task :app:processDebugResources UP-TO-DATE
+> Task :app:javaPreCompileDebug UP-TO-DATE
+> Task :app:mergeDebugShaders UP-TO-DATE
+> Task :app:compileDebugShaders NO-SOURCE
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:mergeDebugAssets UP-TO-DATE
+> Task :app:compressDebugAssets UP-TO-DATE
+> Task :app:checkDebugDuplicateClasses UP-TO-DATE
+> Task :app:desugarDebugFileDependencies UP-TO-DATE
+> Task :app:mergeExtDexDebug UP-TO-DATE
+> Task :app:mergeLibDexDebug UP-TO-DATE
+> Task :app:mergeDebugJniLibFolders UP-TO-DATE
+> Task :app:mergeDebugNativeLibs UP-TO-DATE
+> Task :app:stripDebugDebugSymbols UP-TO-DATE
+> Task :app:validateSigningDebug UP-TO-DATE
+> Task :app:writeDebugAppMetadata UP-TO-DATE
+> Task :app:writeDebugSigningConfigVersions UP-TO-DATE
+
+> Task :app:compileDebugKotlin
+w: file:///C:/Users/Ayman/Desktop/PlayTorrioTV/app/src/main/java/com/playtorrio/tv/ui/screens/anime/AnimeDetailScreen.kt:344:35 'val Icons.Filled.ArrowBack: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ArrowBack.
+w: file:///C:/Users/Ayman/Desktop/PlayTorrioTV/app/src/main/java/com/playtorrio/tv/ui/screens/player/PlayerScreen.kt:778:49 'val Icons.Filled.PlaylistPlay: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.PlaylistPlay.
+w: file:///C:/Users/Ayman/Desktop/PlayTorrioTV/app/src/main/java/com/playtorrio/tv/ui/screens/player/PlayerScreen.kt:1308:21 'var exit: (FocusDirection) -> FocusRequester' is deprecated. Use onExit instead.
+w: file:///C:/Users/Ayman/Desktop/PlayTorrioTV/app/src/main/java/com/playtorrio/tv/ui/screens/player/PlayerScreen.kt:1731:21 'var exit: (FocusDirection) -> FocusRequester' is deprecated. Use onExit instead.
+w: file:///C:/Users/Ayman/Desktop/PlayTorrioTV/app/src/main/java/com/playtorrio/tv/ui/screens/player/PlayerScreen.kt:1873:36 'var exit: (FocusDirection) -> FocusRequester' is deprecated. Use onExit instead.
+w: file:///C:/Users/Ayman/Desktop/PlayTorrioTV/app/src/main/java/com/playtorrio/tv/ui/screens/player/PlayerScreen.kt:2350:19 'constructor(p0: String!): Locale' is deprecated. Deprecated in Java.
+w: file:///C:/Users/Ayman/Desktop/PlayTorrioTV/app/src/main/java/com/playtorrio/tv/ui/screens/player/PlayerViewModel.kt:1171:23 'constructor(p0: String!): Locale' is deprecated. Deprecated in Java.
+w: file:///C:/Users/Ayman/Desktop/PlayTorrioTV/app/src/main/java/com/playtorrio/tv/ui/screens/player/PlayerViewModel.kt:1199:32 This is a delicate API and its use requires care. Make sure you fully read and understand documentation of the declaration that is marked as a delicate API.
+
+> Task :app:compileDebugJavaWithJavac UP-TO-DATE
+> Task :app:processDebugJavaRes UP-TO-DATE
+> Task :app:mergeDebugJavaResource UP-TO-DATE
+> Task :app:dexBuilderDebug
+> Task :app:mergeProjectDexDebug
+> Task :app:packageDebug
+> Task :app:createDebugApkListingFileRedirect UP-TO-DATE
+> Task :app:assembleDebug
+
+BUILD SUCCESSFUL in 46s
+36 actionable tasks: 4 executed, 32 up-to-date
