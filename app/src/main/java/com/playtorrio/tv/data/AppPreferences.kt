@@ -21,7 +21,12 @@ object AppPreferences {
     private const val KEY_TRAILER_AUTOPLAY = "trailer_autoplay"
     private const val KEY_TRAILER_DELAY_SEC = "trailer_delay_sec"
     private const val KEY_STREAMING_SOURCE_ORDER = "streaming_source_order"
+    private const val KEY_STREAMING_SOURCE_ORDER_VERSION = "streaming_source_order_version"
     private const val KEY_STREAMING_EXTRACT_TIMEOUT_SEC = "streaming_extract_timeout_sec"
+    // Bump when DEFAULT_STREAMING_SOURCE_ORDER changes meaningfully (e.g. a new
+    // reliable source is added) so existing installs get re-seeded instead of
+    // being stuck on a stale saved order that lacks the new source.
+    private const val CURRENT_SOURCE_ORDER_VERSION = 2
     private const val KEY_SAVED_ALBUM_IDS = "saved_album_ids"
     private const val KEY_SAVED_TRACK_IDS = "saved_track_ids"
     private const val KEY_MUSIC_PLAYLISTS = "music_playlists"
@@ -35,7 +40,21 @@ object AppPreferences {
         val activeId = com.playtorrio.tv.data.profile.ProfileManager.activeId()
         val fileName = if (activeId == "default") PREFS_BASE else "${PREFS_BASE}_$activeId"
         prefs = context.getSharedPreferences(fileName, Context.MODE_PRIVATE)
+        migrateSourceOrder()
         com.playtorrio.tv.data.stremio.StremioAddonRepository.init(context)
+    }
+
+    /** Re-seed a stale saved source order (e.g. one that predates the 111477
+     *  source) to the current default so new reliable sources are actually
+     *  prioritized after an update. */
+    private fun migrateSourceOrder() {
+        val v = prefs.getInt(KEY_STREAMING_SOURCE_ORDER_VERSION, 0)
+        if (v < CURRENT_SOURCE_ORDER_VERSION) {
+            prefs.edit()
+                .remove(KEY_STREAMING_SOURCE_ORDER)
+                .putInt(KEY_STREAMING_SOURCE_ORDER_VERSION, CURRENT_SOURCE_ORDER_VERSION)
+                .apply()
+        }
     }
 
     var streamingMode: Boolean
@@ -117,9 +136,10 @@ object AppPreferences {
             prefs.edit().putString(KEY_STREAMING_SOURCE_ORDER, csv).apply()
         }
 
-    /** Per-source extraction timeout in seconds (5–60). */
+    /** Per-source extraction timeout in seconds (5–60). Kept short so a slow or
+     *  dead source is abandoned quickly instead of freezing the splash. */
     var streamingExtractTimeoutSec: Int
-        get() = prefs.getInt(KEY_STREAMING_EXTRACT_TIMEOUT_SEC, 25)
+        get() = prefs.getInt(KEY_STREAMING_EXTRACT_TIMEOUT_SEC, 10)
         set(value) = prefs.edit().putInt(KEY_STREAMING_EXTRACT_TIMEOUT_SEC, value.coerceIn(5, 60)).apply()
 
     // Mobile-style priority: 111477 direct file index first (most reliable),

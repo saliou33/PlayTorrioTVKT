@@ -57,6 +57,14 @@ object Site111477Service {
 
     // ── Public API ────────────────────────────────────────────────────────────
 
+    /** Pre-fetch and cache the movie/tv indexes in the background so the first
+     *  "Play Now" resolves instantly instead of downloading a multi-MB index. */
+    suspend fun warmUp(context: Context) = withContext(Dispatchers.IO) {
+        runCatching { ensureMovies(context) }
+        runCatching { ensureTvs(context) }
+        Unit
+    }
+
     suspend fun findMovie(context: Context, title: String, year: String?): Match? =
         findMovieSources(context, title, year).firstOrNull()
 
