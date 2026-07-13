@@ -57,7 +57,10 @@ object StreamExtractorService {
         // Embed players ported from the mobile app — resolved via the WebView
         // m3u8 sniffer, same as Videasy/Vidlink/111Movies.
         Source(10, "VixSrc",   "https://vixsrc.to/"),
-        Source(11, "VidNest",  "https://vidnest.fun/")
+        Source(11, "VidNest",  "https://vidnest.fun/"),
+        // 111477.xyz direct file index (mobile's #1 source). Returns a direct
+        // .mkv/.mp4 URL — no WebView. Resolved by Site111477Service.
+        Source(12, "111477",   "https://a.111477.xyz/", SourceType.HTTP_SCRAPER)
     )
 
     private val httpClient = OkHttpClient.Builder()
@@ -140,6 +143,7 @@ object StreamExtractorService {
                     5 -> WebStreamrService.extractFourKHDHub(tmdbId, season, episode)
                     6 -> WebStreamrService.extractHDHub4u(tmdbId, season, episode)
                     9 -> WebStreamrService.extractXpass(tmdbId, season, episode)
+                    12 -> extract111477(context, tmdbId, season, episode)
                     7 -> {
                         val embedResult = WebStreamrService.extractFlixerTVEmbed(tmdbId, season, episode)
                         if (embedResult != null) {
@@ -150,6 +154,31 @@ object StreamExtractorService {
                     else -> null
                 }
             }
+        }
+    }
+
+    // ── 111477.xyz (direct file index) ────────────────────────────────────────
+    // Site111477Service matches by title+year, so resolve the title from TMDB
+    // first, then hand off. Returns a direct .mkv/.mp4 URL for the player.
+    private suspend fun extract111477(
+        context: Context, tmdbId: Int, season: Int?, episode: Int?
+    ): StreamResult? = withContext(Dispatchers.IO) {
+        try {
+            val match = if (season == null) {
+                val d = com.playtorrio.tv.data.api.TmdbClient.api
+                    .getMovieDetails(tmdbId, com.playtorrio.tv.data.api.TmdbClient.API_KEY)
+                val title = d.title ?: return@withContext null
+                Site111477Service.findMovie(context, title, d.releaseDate?.take(4))
+            } else {
+                val d = com.playtorrio.tv.data.api.TmdbClient.api
+                    .getTvDetails(tmdbId, com.playtorrio.tv.data.api.TmdbClient.API_KEY)
+                val title = d.name ?: return@withContext null
+                Site111477Service.findEpisode(context, title, season, episode ?: 1)
+            }
+            match?.let { StreamResult(it.fileUrl, Site111477Service.REFERER) }
+        } catch (e: Exception) {
+            Log.w(TAG, "[111477] extraction failed: ${e.message}")
+            null
         }
     }
 
