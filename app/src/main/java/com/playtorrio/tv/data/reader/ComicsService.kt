@@ -9,14 +9,16 @@ import org.jsoup.Jsoup
 import java.util.concurrent.TimeUnit
 
 /**
- * Port of lib/api/comics_service.dart — readcomiconline.li scraper +
- * faithful Kotlin port of the rguard.min.js obfuscated page-URL decoder.
+ * Port of lib/api/comics_service.dart — rcostation.xyz scraper (same
+ * ReadComicOnline API surface) + faithful Kotlin port of the rguard.min.js
+ * obfuscated page-URL decoder. The old readcomiconline.li domain is dead;
+ * the mobile app moved to rcostation.xyz, which is what makes comics load.
  *
  * Image URLs are returned as raw upstream URLs. The reader UI loads them via
  * [ComicImageLoader] which adds the right Referer header per host.
  */
 object ComicsService {
-    private const val BASE = "https://readcomiconline.li"
+    private const val BASE = "https://rcostation.xyz"
     private const val UA =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 

@@ -11,6 +11,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
@@ -276,6 +278,7 @@ fun HomeScreen(navController: NavController, viewModel: HomeViewModel = viewMode
                 val rowFocusRequesters = remember(totalRows) {
                     List(totalRows.coerceAtLeast(1)) { FocusRequester() }
                 }
+                val heroSearchFr = remember { FocusRequester() }
                 val lazyListState = rememberLazyListState()
 
                 // Expose a focus-restore callback to the NavPill (sibling in the outer Box).
@@ -313,13 +316,18 @@ fun HomeScreen(navController: NavController, viewModel: HomeViewModel = viewMode
                         .onPreviewKeyEvent { event ->
                             if (event.type == KeyEventType.KeyDown) {
                                 when (event.key) {
+                                    Key.Menu -> { navOpenTrigger++; true }
                                     Key.DirectionDown -> {
                                         if (activeRowIndex < totalRows - 1) { activeRowIndex++; true }
                                         else false
                                     }
                                     Key.DirectionUp -> {
                                         if (activeRowIndex > 0) { activeRowIndex--; true }
-                                        else { navOpenTrigger++; true }
+                                        else {
+                                            // Top row → focus the hero Search bar (Up again opens the menu).
+                                            try { heroSearchFr.requestFocus() } catch (_: Exception) {}
+                                            true
+                                        }
                                     }
                                     else -> false
                                 }
@@ -337,6 +345,15 @@ fun HomeScreen(navController: NavController, viewModel: HomeViewModel = viewMode
                             modifier = Modifier
                                 .fillMaxWidth(0.45f)
                                 .padding(start = 48.dp, bottom = 16.dp)
+                        )
+                        HomeSearchBar(
+                            focusRequester = heroSearchFr,
+                            onClick = { navController.navigate("search") },
+                            onUp = { navOpenTrigger++ },
+                            onDown = {
+                                try { rowFocusRequesters.firstOrNull()?.requestFocus() } catch (_: Exception) {}
+                            },
+                            modifier = Modifier.align(Alignment.TopEnd).padding(top = 24.dp, end = 48.dp)
                         )
                     }
 
@@ -588,6 +605,46 @@ fun HomeScreen(navController: NavController, viewModel: HomeViewModel = viewMode
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
+private fun HomeSearchBar(
+    focusRequester: FocusRequester,
+    onClick: () -> Unit,
+    onUp: () -> Unit,
+    onDown: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var focused by remember { mutableStateOf(false) }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(if (focused) Color(0xFF818CF8).copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.45f))
+            .border(
+                width = if (focused) 2.dp else 1.dp,
+                color = if (focused) Color(0xFF818CF8) else Color.White.copy(alpha = 0.15f),
+                shape = RoundedCornerShape(999.dp)
+            )
+            .focusRequester(focusRequester)
+            .onFocusChanged { focused = it.isFocused }
+            .focusable()
+            .onPreviewKeyEvent { e ->
+                if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                when (e.key) {
+                    Key.DirectionUp -> { onUp(); true }
+                    Key.DirectionDown -> { onDown(); true }
+                    Key.Enter, Key.NumPadEnter, Key.DirectionCenter -> { onClick(); true }
+                    else -> false
+                }
+            }
+            .clickable { onClick() }
+            .padding(horizontal = 18.dp, vertical = 9.dp)
+    ) {
+        Icon(Icons.Filled.Search, contentDescription = "Search", tint = Color.White, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text("Search movies, shows, anime…", color = Color.White.copy(alpha = 0.85f), fontSize = 13.sp)
+    }
+}
+
+@Composable
 private fun NavPill(
     navController: NavController,
     navFocusRequester: FocusRequester,
@@ -669,13 +726,6 @@ private fun NavPill(
                             isActive = true,
                             onClicked = { /* already on home */ },
                             focusRequester = navFocusRequester,
-                            onExitRight = onExitToContent,
-                        )
-                        NavPillItem(
-                            icon = Icons.Filled.Search,
-                            label = "Search",
-                            isActive = false,
-                            onClicked = { navController.navigate("search") },
                             onExitRight = onExitToContent,
                         )
                         NavPillItem(
