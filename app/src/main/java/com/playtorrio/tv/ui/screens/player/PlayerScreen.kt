@@ -72,6 +72,7 @@ fun PlayerScreen(viewModel: PlayerViewModel) {
         state.showSubtitleOverlay,
         state.showAudioOverlay,
         state.showQualityOverlay,
+        state.showSpeedOverlay,
         state.showPauseOverlay,
         state.showSubtitleStylePanel,
         state.showSourcesPanel,
@@ -82,6 +83,7 @@ fun PlayerScreen(viewModel: PlayerViewModel) {
             !state.showSubtitleOverlay &&
             !state.showAudioOverlay &&
             !state.showQualityOverlay &&
+            !state.showSpeedOverlay &&
             !state.showSubtitleStylePanel &&
             !state.showSourcesPanel &&
             !state.showEpisodesPanel &&
@@ -93,6 +95,7 @@ fun PlayerScreen(viewModel: PlayerViewModel) {
             !state.showSubtitleOverlay &&
             !state.showAudioOverlay &&
             !state.showQualityOverlay &&
+            !state.showSpeedOverlay &&
             !state.showPauseOverlay &&
             !state.showSubtitleStylePanel &&
             !state.showEpisodesPanel &&
@@ -135,6 +138,7 @@ fun PlayerScreen(viewModel: PlayerViewModel) {
                 val panelOpen = state.showSubtitleOverlay ||
                         state.showAudioOverlay ||
                         state.showQualityOverlay ||
+                        state.showSpeedOverlay ||
                         state.showSubtitleStylePanel ||
                         state.showSourcesPanel ||
                         state.showEpisodesPanel ||
@@ -305,7 +309,7 @@ fun PlayerScreen(viewModel: PlayerViewModel) {
         val skipSeg = state.activeSkipSegment
         val panelsOpen = state.showEpisodesPanel || state.showEpisodeSourceOverlay ||
             state.showSourcesPanel || state.showSubtitleOverlay ||
-            state.showAudioOverlay || state.showQualityOverlay || state.showQualityOverlay || state.showSubtitleStylePanel
+            state.showAudioOverlay || state.showQualityOverlay || state.showSpeedOverlay || state.showSubtitleStylePanel
         val hasNextEp = !state.isMovie && state.nextEpisode != null && !state.isSwitchingEpisode
         val nearEnd = state.duration > 0 &&
             state.currentPosition >= (state.duration * 0.90).toLong()
@@ -378,6 +382,7 @@ fun PlayerScreen(viewModel: PlayerViewModel) {
                 !state.showSubtitleOverlay &&
                 !state.showAudioOverlay &&
                 !state.showQualityOverlay &&
+                !state.showSpeedOverlay &&
                 !state.showSubtitleStylePanel &&
                 !state.showSourcesPanel &&
                 !state.showEpisodesPanel &&
@@ -436,6 +441,9 @@ fun PlayerScreen(viewModel: PlayerViewModel) {
         // ── Quality selection overlay ──
         QualitySelectionOverlay(state, viewModel)
 
+        // ── Playback speed overlay ──
+        SpeedSelectionOverlay(state, viewModel)
+
         // ── Subtitle style panel ──
         SubtitleStylePanel(state, viewModel)
     }
@@ -447,6 +455,7 @@ private fun handleBackPress(viewModel: PlayerViewModel, state: PlayerUiState, on
         state.showSubtitleOverlay -> viewModel.hideSubtitleOverlay()
         state.showAudioOverlay -> viewModel.hideAudioOverlay()
         state.showQualityOverlay -> viewModel.hideQualityOverlay()
+        state.showSpeedOverlay -> viewModel.hideSpeedOverlay()
         state.showSourcesPanel -> viewModel.dismissSourcesPanel()
         state.showEpisodeSourceOverlay -> viewModel.dismissEpisodeSourceOverlay()
         state.showEpisodesPanel -> viewModel.dismissEpisodesPanel()
@@ -755,6 +764,16 @@ private fun PlayerControlsOverlay(
                         icon = Icons.Filled.AspectRatio,
                         contentDescription = "Aspect Ratio",
                         onClick = { viewModel.cycleAspectRatio() },
+                        upFocusRequester = progressBarFocusRequester,
+                        onDownKey = { viewModel.hideControls() },
+                        onFocused = { viewModel.scheduleControlsHide() }
+                    )
+
+                    // Playback speed
+                    ControlButton(
+                        icon = Icons.Filled.Speed,
+                        contentDescription = "Playback Speed",
+                        onClick = { viewModel.showSpeedOverlay() },
                         upFocusRequester = progressBarFocusRequester,
                         onDownKey = { viewModel.hideControls() },
                         onFocused = { viewModel.scheduleControlsHide() }
@@ -1915,6 +1934,70 @@ private fun QualitySelectionOverlay(state: PlayerUiState, viewModel: PlayerViewM
 
         LaunchedEffect(state.showQualityOverlay) {
             if (state.showQualityOverlay) {
+                delay(100)
+                try { firstFocusRequester.requestFocus() } catch (_: Exception) {}
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class, ExperimentalComposeUiApi::class)
+@Composable
+private fun SpeedSelectionOverlay(state: PlayerUiState, viewModel: PlayerViewModel) {
+    val firstFocusRequester = remember { FocusRequester() }
+
+    AnimatedVisibility(
+        visible = state.showSpeedOverlay,
+        enter = fadeIn(tween(200)),
+        exit = fadeOut(tween(200))
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.85f))
+                .padding(start = 52.dp, end = 52.dp, top = 36.dp, bottom = 76.dp)
+                .focusProperties { exit = { FocusRequester.Cancel } }
+                .focusGroup()
+        ) {
+            Column(
+                modifier = Modifier.align(Alignment.BottomStart),
+                verticalArrangement = Arrangement.Bottom
+            ) {
+                Text(
+                    text = "Playback Speed",
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = Color.White,
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+
+                RailColumn(width = 320.dp, title = "Speed") {
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        contentPadding = PaddingValues(top = 8.dp, bottom = 8.dp),
+                        modifier = Modifier.heightIn(max = 500.dp)
+                    ) {
+                        itemsIndexed(viewModel.playbackSpeeds) { index, speed ->
+                            val isSelected =
+                                kotlin.math.abs(state.playbackSpeed - speed) < 0.01f
+                            AudioTrackCard(
+                                name = if (speed == 1.0f) "Normal (1x)"
+                                       else "${speed.toString().trimEnd('0').trimEnd('.')}x",
+                                metadata = if (speed == 1.0f) "Default" else "",
+                                isSelected = isSelected,
+                                onClick = {
+                                    viewModel.setPlaybackSpeed(speed)
+                                    viewModel.hideSpeedOverlay()
+                                },
+                                focusRequester = if (index == 0) firstFocusRequester else null
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        LaunchedEffect(state.showSpeedOverlay) {
+            if (state.showSpeedOverlay) {
                 delay(100)
                 try { firstFocusRequester.requestFocus() } catch (_: Exception) {}
             }

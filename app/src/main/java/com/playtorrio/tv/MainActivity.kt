@@ -88,7 +88,11 @@ class MainActivity : ComponentActivity() {
                 ) {
                     composable("splash") {
                         SplashScreen(onFinished = {
-                            navController.navigate("profile_select") {
+                            // Show "Who's watching?" only until the user has
+                            // picked a profile once; afterwards go straight Home.
+                            val next = if (com.playtorrio.tv.data.profile.ProfileManager.isOnboarded())
+                                "home" else "profile_select"
+                            navController.navigate(next) {
                                 popUpTo("splash") { inclusive = true }
                             }
                         })

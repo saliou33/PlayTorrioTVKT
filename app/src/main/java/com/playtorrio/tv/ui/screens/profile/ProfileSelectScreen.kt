@@ -140,6 +140,7 @@ fun ProfileSelectScreen(navController: NavController) {
                         canDelete = profiles.size > 1,
                         onSelect = {
                             ProfileManager.setActive(profile.id)
+                            ProfileManager.markOnboarded()
                             navController.navigate("home") {
                                 popUpTo("profile_select") { inclusive = true }
                             }

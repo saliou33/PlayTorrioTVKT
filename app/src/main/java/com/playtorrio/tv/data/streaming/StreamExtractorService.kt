@@ -53,7 +53,11 @@ object StreamExtractorService {
         Source(6, "HDHub4u",   "https://new5.hdhub4u.fo/", SourceType.HTTP_SCRAPER),
         Source(7, "FlixerTV",  "https://theflixertv.to/",  SourceType.HTTP_SCRAPER),
         Source(8, "VsEmbed",   "https://vsembed.ru/"),
-        Source(9, "Xpass",     "https://play.xpass.top/", SourceType.HTTP_SCRAPER)
+        Source(9, "Xpass",     "https://play.xpass.top/", SourceType.HTTP_SCRAPER),
+        // Embed players ported from the mobile app — resolved via the WebView
+        // m3u8 sniffer, same as Videasy/Vidlink/111Movies.
+        Source(10, "VixSrc",   "https://vixsrc.to/"),
+        Source(11, "VidNest",  "https://vidnest.fun/")
     )
 
     private val httpClient = OkHttpClient.Builder()
@@ -74,6 +78,10 @@ object StreamExtractorService {
                  else "https://api.rgshows.ru/main/tv/$tmdbId/$season/$episode"
             8 -> if (isMovie) "https://vsembed.ru/embed/movie/$tmdbId"
                  else "https://vsembed.ru/embed/tv?tmdb=$tmdbId&season=$season&episode=$episode"
+            10 -> if (isMovie) "https://vixsrc.to/movie/$tmdbId/"
+                  else "https://vixsrc.to/tv/$tmdbId/$season/$episode/"
+            11 -> if (isMovie) "https://vidnest.fun/movie/$tmdbId"
+                  else "https://vidnest.fun/tv/$tmdbId/$season/$episode"
             // 5 = 4KHDHub, 6 = HDHub4u: URLs built internally by WebStreamrService
             else -> throw IllegalArgumentException("Unknown source: $sourceIdx")
         }

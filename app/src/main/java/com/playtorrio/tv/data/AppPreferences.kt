@@ -122,7 +122,10 @@ object AppPreferences {
         get() = prefs.getInt(KEY_STREAMING_EXTRACT_TIMEOUT_SEC, 25)
         set(value) = prefs.edit().putInt(KEY_STREAMING_EXTRACT_TIMEOUT_SEC, value.coerceIn(5, 60)).apply()
 
-    val DEFAULT_STREAMING_SOURCE_ORDER = listOf(2, 8, 3, 1, 4, 5, 6, 7)
+    // Front-load the reliable TMDB-embed players (mobile-style ordering), then
+    // the HTTP scrapers. 3=Vidlink 10=VixSrc 11=VidNest 2=Videasy 1=111Movies
+    // 8=VsEmbed 4=RgShows 5=4KHDHub 6=HDHub4u 7=FlixerTV 9=Xpass
+    val DEFAULT_STREAMING_SOURCE_ORDER = listOf(3, 10, 11, 2, 1, 8, 4, 5, 6, 7, 9)
 
     var savedAlbumIds: Set<String>
         get() = prefs.getStringSet(KEY_SAVED_ALBUM_IDS, emptySet()) ?: emptySet()

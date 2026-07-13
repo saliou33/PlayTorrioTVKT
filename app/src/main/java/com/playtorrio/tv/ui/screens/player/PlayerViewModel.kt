@@ -153,6 +153,8 @@ data class PlayerUiState(
     // Aspect
     val aspectMode: AspectMode = AspectMode.FIT,
     val showAspectIndicator: Boolean = false,
+    // Playback speed (1.0 = normal)
+    val playbackSpeed: Float = 1.0f,
     // Subtitle style
     val subtitleStyle: SubtitleStyleSettings = SubtitleStyleSettings(),
     /** Cues of the currently active external subtitle (rendered by Compose
@@ -170,6 +172,7 @@ data class PlayerUiState(
     val showSubtitleOverlay: Boolean = false,
     val showAudioOverlay: Boolean = false,
     val showQualityOverlay: Boolean = false,
+    val showSpeedOverlay: Boolean = false,
     val showSubtitleStylePanel: Boolean = false,
     // Streaming mode
     val isStreamingMode: Boolean = false,
@@ -644,6 +647,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             .build()
         exo.setAudioAttributes(audioAttrs, false)
         exo.volume = 1.0f
+        exo.setPlaybackSpeed(_uiState.value.playbackSpeed)
 
         Log.d(TAG, "Creating player with stream URL: $streamUrl")
         val mediaItem = MediaItem.fromUri(streamUrl)
@@ -1166,6 +1170,23 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         showControls()
     }
 
+    fun showSpeedOverlay() {
+        _uiState.update { it.copy(showSpeedOverlay = true, showControls = false) }
+    }
+
+    fun hideSpeedOverlay() {
+        _uiState.update { it.copy(showSpeedOverlay = false) }
+        showControls()
+    }
+
+    /** Available playback speeds offered in the speed overlay. */
+    val playbackSpeeds: List<Float> = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
+
+    fun setPlaybackSpeed(speed: Float) {
+        player?.setPlaybackSpeed(speed)
+        _uiState.update { it.copy(playbackSpeed = speed) }
+    }
+
     fun showSubtitleStylePanel() {
         _uiState.update { it.copy(showSubtitleStylePanel = true, showControls = false) }
     }
@@ -1613,6 +1634,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             .build()
         exo.setAudioAttributes(audioAttrs, false)
         exo.volume = 1.0f
+        exo.setPlaybackSpeed(_uiState.value.playbackSpeed)
 
         currentStreamUrl = streamUrl
         autoQualityAppliedForUrl = null

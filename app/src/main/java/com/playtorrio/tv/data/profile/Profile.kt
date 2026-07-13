@@ -28,6 +28,7 @@ object ProfileManager {
     private const val PREFS_NAME = "playtorrio_profiles"
     private const val KEY_PROFILES = "profiles_v1"
     private const val KEY_ACTIVE = "active_profile_id"
+    private const val KEY_ONBOARDED = "onboarded_v1"
     private const val DEFAULT_ID = "default"
 
     private lateinit var prefs: SharedPreferences
@@ -53,6 +54,15 @@ object ProfileManager {
     }
 
     fun activeId(): String = activeIdCache
+
+    /** True once the user has explicitly picked a profile at least once. The
+     *  "Who's watching?" screen is shown only until this is set, so normal
+     *  launches go straight to Home. */
+    fun isOnboarded(): Boolean = prefs.getBoolean(KEY_ONBOARDED, false)
+
+    fun markOnboarded() {
+        prefs.edit().putBoolean(KEY_ONBOARDED, true).apply()
+    }
 
     fun activeProfile(): Profile =
         loadProfiles().firstOrNull { it.id == activeIdCache }
