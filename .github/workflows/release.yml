@@ -31,6 +31,9 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          # Cache ~/.gradle (downloaded deps + wrapper dist) keyed on the
+          # gradle files, so later runs skip the cold download + resolution.
+          cache: gradle
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
