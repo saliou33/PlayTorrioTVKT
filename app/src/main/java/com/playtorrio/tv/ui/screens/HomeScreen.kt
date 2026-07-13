@@ -93,6 +93,8 @@ import coil.compose.AsyncImage
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Headphones
@@ -711,6 +713,20 @@ private fun NavPill(
                             label = "IPTV",
                             isActive = false,
                             onClicked = { navController.navigate("iptv") },
+                            onExitRight = onExitToContent,
+                        )
+                        NavPillItem(
+                            icon = Icons.Filled.Download,
+                            label = "Torrent",
+                            isActive = false,
+                            onClicked = { navController.navigate("torrent_search") },
+                            onExitRight = onExitToContent,
+                        )
+                        NavPillItem(
+                            icon = Icons.Filled.Extension,
+                            label = "Addons",
+                            isActive = false,
+                            onClicked = { navController.navigate("addons") },
                             onExitRight = onExitToContent,
                         )
                         NavPillItem(

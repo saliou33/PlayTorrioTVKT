@@ -61,6 +61,11 @@ object AppPreferences {
         get() = prefs.getBoolean(KEY_STREAMING_MODE, true)
         set(value) = prefs.edit().putBoolean(KEY_STREAMING_MODE, value).apply()
 
+    /** Show the 18+ (Hentai) anime row/section. */
+    var showAdultAnime: Boolean
+        get() = prefs.getBoolean("show_adult_anime", true)
+        set(value) = prefs.edit().putBoolean("show_adult_anime", value).apply()
+
     var debridEnabled: Boolean
         get() = prefs.getBoolean(KEY_DEBRID_ENABLED, false)
         set(value) = prefs.edit().putBoolean(KEY_DEBRID_ENABLED, value).apply()

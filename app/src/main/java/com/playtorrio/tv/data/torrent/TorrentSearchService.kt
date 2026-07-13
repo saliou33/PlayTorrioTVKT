@@ -13,6 +13,75 @@ object TorrentSearchService {
 
     private const val TAG = "TorrentSearch"
 
+    /** Free-text search for the Torrent hub — searches every indexer with the
+     *  raw query (no title-relevance filtering), deduped and sorted by seeders. */
+    suspend fun searchRaw(query: String): List<TorrentResult> = coroutineScope {
+        val q = query.trim()
+        if (q.isBlank()) return@coroutineScope emptyList()
+        val uindex = async { runCatching { searchUindex(q) }.getOrDefault(emptyList()) }
+        val knaben = async { runCatching { searchKnaben(q) }.getOrDefault(emptyList()) }
+        val tpb = async { runCatching { searchApibay(q) }.getOrDefault(emptyList()) }
+        val all = uindex.await() + knaben.await() + tpb.await()
+        deduplicateResults(all).sortedByDescending { it.seeders }
+    }
+
+    // Common public trackers appended to magnets built from an info-hash.
+    private val TRACKERS = listOf(
+        "udp://tracker.opentrackr.org:1337/announce",
+        "udp://open.demonii.com:1337/announce",
+        "udp://tracker.openbittorrent.com:6969/announce",
+        "udp://exodus.desync.com:6969/announce",
+        "udp://tracker.torrent.eu.org:451/announce",
+    )
+
+    private fun magnetFromHash(hash: String, name: String): String {
+        val dn = URLEncoder.encode(name, "UTF-8")
+        val tr = TRACKERS.joinToString("") { "&tr=" + URLEncoder.encode(it, "UTF-8") }
+        return "magnet:?xt=urn:btih:$hash&dn=$dn$tr"
+    }
+
+    private fun humanSize(bytes: Long): String {
+        if (bytes <= 0) return ""
+        val units = arrayOf("B", "KB", "MB", "GB", "TB")
+        var v = bytes.toDouble(); var i = 0
+        while (v >= 1024 && i < units.size - 1) { v /= 1024; i++ }
+        return if (i <= 1) "${v.toInt()} ${units[i]}" else String.format("%.1f %s", v, units[i])
+    }
+
+    /** ThePirateBay via the apibay JSON API — reliable (no HTML scraping). */
+    private suspend fun searchApibay(query: String): List<TorrentResult> = withContext(Dispatchers.IO) {
+        val out = mutableListOf<TorrentResult>()
+        try {
+            val url = "https://apibay.org/q.php?q=${URLEncoder.encode(query, "UTF-8")}&cat=0"
+            val body = URL(url).openConnection().apply {
+                setRequestProperty("User-Agent", "Mozilla/5.0")
+                connectTimeout = 10_000; readTimeout = 12_000
+            }.getInputStream().bufferedReader().use { it.readText() }
+            val arr = org.json.JSONArray(body)
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                val hash = o.optString("info_hash")
+                // apibay returns a single sentinel row when there are no matches.
+                if (hash.isBlank() || hash.all { it == '0' }) continue
+                val name = o.optString("name")
+                if (name.isBlank()) continue
+                out.add(
+                    TorrentResult(
+                        name = name,
+                        magnetLink = magnetFromHash(hash, name),
+                        size = humanSize(o.optString("size").toLongOrNull() ?: 0L),
+                        seeders = o.optString("seeders").toIntOrNull() ?: 0,
+                        leechers = o.optString("leechers").toIntOrNull() ?: 0,
+                        source = "ThePirateBay",
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "apibay search failed: $query", e)
+        }
+        out
+    }
+
     suspend fun search(request: TorrentSearchRequest): List<TorrentResult> = coroutineScope {
         val allResults = mutableListOf<TorrentResult>()
         // Normalize title for search queries (strip special chars that break indexer search)

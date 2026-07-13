@@ -29,6 +29,7 @@ class AnimeViewModel : ViewModel() {
     val topRated     = MutableStateFlow<List<AnimeCard>>(emptyList())
     val latestDone   = MutableStateFlow<List<AnimeCard>>(emptyList())
     val recentEps    = MutableStateFlow<List<AnimeCard>>(emptyList())
+    val hentai       = MutableStateFlow<List<AnimeCard>>(emptyList())
     val isLoading    = MutableStateFlow(true)
     val homeError    = MutableStateFlow<String?>(null)
 
@@ -36,6 +37,7 @@ class AnimeViewModel : ViewModel() {
     val selectedAnime   = MutableStateFlow<AnimeCard?>(null)
     val episodes        = MutableStateFlow<List<AnimeEpisode>>(emptyList())
     val relations       = MutableStateFlow<List<AnimeCard>>(emptyList())
+    val seasons         = MutableStateFlow<List<AnimeCard>>(emptyList())
     val resolvedSeries  = MutableStateFlow<AnikotoSeries?>(null)
     val detailLoading   = MutableStateFlow(false)
     val episodesPage    = MutableStateFlow(0)
@@ -83,6 +85,11 @@ class AnimeViewModel : ViewModel() {
                 val rt = async { runCatching { AnimeService.getTopRated(20) }.getOrDefault(emptyList()) }
                 val lc = async { runCatching { AnimeService.getLatestCompleted(20) }.getOrDefault(emptyList()) }
                 val re = async { runCatching { AnimeService.getRecentEpisodes(20) }.getOrDefault(emptyList()) }
+                val he = async {
+                    if (com.playtorrio.tv.data.AppPreferences.showAdultAnime)
+                        runCatching { AnimeService.browse(genre = "Hentai", sort = "POPULARITY_DESC", perPage = 20) }.getOrDefault(emptyList())
+                    else emptyList()
+                }
                 spotlight.value   = sp.await()
                 top10.value       = t10.await()
                 trending.value    = tr.await()
@@ -91,6 +98,7 @@ class AnimeViewModel : ViewModel() {
                 topRated.value    = rt.await()
                 latestDone.value  = lc.await()
                 recentEps.value   = re.await()
+                hentai.value      = he.await()
             } catch (e: Exception) {
                 homeError.value = e.message
             } finally {
@@ -104,6 +112,7 @@ class AnimeViewModel : ViewModel() {
         selectedAnime.value = anime
         episodes.value = emptyList()
         relations.value = emptyList()
+        seasons.value = emptyList()
         resolvedSeries.value = null
         episodesPage.value = 0
         detailLoading.value = true
@@ -115,10 +124,12 @@ class AnimeViewModel : ViewModel() {
 
                 val epList = async { runCatching { AnimeService.getEpisodes(fresh) }.getOrDefault(emptyList()) }
                 val relList = async { runCatching { AnimeService.getRelations(fresh.id) }.getOrDefault(emptyList()) }
+                val seaList = async { runCatching { AnimeService.getSeasons(fresh.id) }.getOrDefault(emptyList()) }
                 val ser = async { runCatching { AnimeService.resolveAnikoto(fresh) }.getOrNull() }
 
                 episodes.value       = epList.await()
                 relations.value      = relList.await()
+                seasons.value        = seaList.await().takeIf { it.size > 1 } ?: emptyList()
                 resolvedSeries.value = ser.await()
             } catch (_: Exception) {
             } finally {

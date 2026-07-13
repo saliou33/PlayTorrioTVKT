@@ -48,6 +48,7 @@ fun AnimeScreen(
     val topRated    by vm.topRated.collectAsState()
     val latestDone  by vm.latestDone.collectAsState()
     val recentEps   by vm.recentEps.collectAsState()
+    val hentai      by vm.hentai.collectAsState()
     val isLoading   by vm.isLoading.collectAsState()
     
     val continueWatching = remember { mutableStateOf(emptyList<com.playtorrio.tv.data.watch.WatchProgress>()) }
@@ -135,6 +136,9 @@ fun AnimeScreen(
             animeRow("Top Rated",         Icons.Filled.EmojiEvents,         topRated,    navController)
             animeRow("Latest Completed",  Icons.Filled.CheckCircle,         latestDone,  navController)
             animeRow("Recent Episodes",   Icons.Filled.NewReleases,         recentEps,   navController)
+            if (hentai.isNotEmpty()) {
+                animeRow("18+ (Hentai)",  Icons.Filled.Whatshot,            hentai,      navController)
+            }
         }
 
         // ── Top bar overlay ───────────────────────────────────────────────────
@@ -304,6 +308,8 @@ fun AnimeCard(
     anime: com.playtorrio.tv.data.anime.AnimeCard,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    label: String? = null,
+    highlighted: Boolean = false,
 ) {
     Card(
         onClick = onClick,
@@ -311,6 +317,9 @@ fun AnimeCard(
         colors = CardDefaults.colors(containerColor = CardBg),
         shape = CardDefaults.shape(shape = RoundedCornerShape(10.dp)),
         scale = CardDefaults.scale(focusedScale = 1.06f),
+        border = if (highlighted) CardDefaults.border(
+            border = Border(androidx.compose.foundation.BorderStroke(2.dp, Purple), shape = RoundedCornerShape(10.dp))
+        ) else CardDefaults.border(),
     ) {
         Column {
             Box(Modifier.fillMaxWidth().height(190.dp)) {
@@ -319,6 +328,15 @@ fun AnimeCard(
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp)),
                 )
+                if (label != null) {
+                    Box(
+                        Modifier.align(Alignment.TopStart).padding(6.dp)
+                            .background(Purple.copy(0.85f), RoundedCornerShape(4.dp))
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                    ) {
+                        Text(label, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
                 anime.averageScore?.let { score ->
                     Box(
                         Modifier.align(Alignment.TopEnd).padding(6.dp)

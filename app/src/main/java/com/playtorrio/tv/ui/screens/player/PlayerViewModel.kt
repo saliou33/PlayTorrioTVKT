@@ -178,6 +178,8 @@ data class PlayerUiState(
     val isStreamingMode: Boolean = false,
     val isMagnet: Boolean = false,
     val currentSourceIndex: Int = 1,
+    /** Per-source status shown in the sources panel: "loading" | "ok" | "failed". */
+    val sourceStatus: Map<Int, String> = emptyMap(),
     val streamUrl: String? = null,
     val referer: String? = null,
     val animeOrigin: String? = null,
@@ -361,8 +363,38 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     /** Track sources we already failed on this session so we don't cycle back. */
     private val failedSourceIndices = mutableSetOf<Int>()
 
+    /** True until the user manually picks a source in the panel. While true we
+     *  auto-advance through sources on failure; once the user chooses, we stop
+     *  overriding their choice and just keep (re)trying the picked source. */
+    private var autoAdvanceSources: Boolean = true
+
+    private fun setSourceStatus(idx: Int, status: String) {
+        _uiState.update { it.copy(sourceStatus = it.sourceStatus + (idx to status)) }
+    }
+
     private fun tryNextSource(reason: String) {
         val state = _uiState.value
+
+        // Respect a manual source choice: don't jump to another source. Mark it
+        // and keep reconnecting the SAME source (resilient, never gives up).
+        if (!autoAdvanceSources && state.isStreamingMode && state.animeEmbeds == null) {
+            setSourceStatus(state.currentSourceIndex, "loading")
+            _uiState.update {
+                it.copy(isReconnecting = true, reconnectStatus = "Reconnecting…", error = null)
+            }
+            currentStreamUrl?.let { url ->
+                streamRetryJob?.cancel()
+                streamRetryJob = viewModelScope.launch {
+                    delay(3_000)
+                    val exo = player ?: return@launch
+                    try {
+                        exo.stop(); exo.clearMediaItems()
+                        exo.setMediaItem(MediaItem.fromUri(url)); exo.prepare(); exo.playWhenReady = true
+                    } catch (_: Exception) {}
+                }
+            }
+            return
+        }
         // IPTV streams have no fallback sources — surface the error directly.
         if (state.isIptv) {
             _uiState.update {
@@ -399,12 +431,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
         failedSourceIndices.add(state.currentSourceIndex)
+        setSourceStatus(state.currentSourceIndex, "failed")
         Log.i(TAG, "tryNextSource: failed=${state.currentSourceIndex}, failedSet=$failedSourceIndices, tmdbId=${state.tmdbId} s=${state.seasonNumber} e=${state.episodeNumber}")
 
         val nextIdx = orderedSourceIndices.firstOrNull { it !in failedSourceIndices }
         if (nextIdx != null) {
             val sourceName = StreamExtractorService.SOURCES.find { it.index == nextIdx }?.name ?: "source"
             Log.i(TAG, "Stream failed ($reason), switching to $sourceName")
+            setSourceStatus(nextIdx, "loading")
             _uiState.update {
                 it.copy(
                     isConnecting = true,
@@ -1456,7 +1490,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     ) {
         if (player != null) return
         failedSourceIndices.clear()
-        
+        autoAdvanceSources = true
+        setSourceStatus(sourceIndex, "ok")
+
         resumeAnimeId = animeId
         resumeAnimeCategory = animeCategory
 
@@ -1716,6 +1752,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 if (state == Player.STATE_READY) {
                     resetStartupRetryState()
+                    setSourceStatus(_uiState.value.currentSourceIndex, "ok")
                     _uiState.update {
                         it.copy(
                             duration = exo.duration.coerceAtLeast(0),
@@ -2448,9 +2485,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun switchToSource(sourceIdx: Int) {
+    fun switchToSource(sourceIdx: Int, userInitiated: Boolean = false) {
         val state = _uiState.value
-        Log.i(TAG, "switchToSource($sourceIdx) tmdbId=${state.tmdbId} season=${state.seasonNumber} episode=${state.episodeNumber} isMovie=${state.isMovie}")
+        Log.i(TAG, "switchToSource($sourceIdx, user=$userInitiated) tmdbId=${state.tmdbId} season=${state.seasonNumber} episode=${state.episodeNumber} isMovie=${state.isMovie}")
+        // A manual pick locks the source: stop auto-advancing to other sources
+        // on failure and just keep (re)trying this one until the user changes it.
+        if (userInitiated) {
+            autoAdvanceSources = false
+            failedSourceIndices.clear()
+            streamRetryJob?.cancel()
+            resetStartupRetryState()
+        }
+        setSourceStatus(sourceIdx, "loading")
         _uiState.update { it.copy(showSourcesPanel = false, isSwitchingSource = true) }
 
         viewModelScope.launch {

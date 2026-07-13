@@ -2066,8 +2066,9 @@ private fun StreamSourcesPanel(state: PlayerUiState, viewModel: PlayerViewModel)
                                 SourceItemCard(
                                     name = source.name,
                                     isSelected = isCurrentSource,
+                                    status = state.sourceStatus[source.index],
                                     onClick = {
-                                        if (!isCurrentSource) viewModel.switchToSource(source.index)
+                                        viewModel.switchToSource(source.index, userInitiated = true)
                                     },
                                     focusRequester = if (index == 0) firstFocusRequester else null
                                 )
@@ -2092,6 +2093,7 @@ private fun StreamSourcesPanel(state: PlayerUiState, viewModel: PlayerViewModel)
 private fun SourceItemCard(
     name: String,
     isSelected: Boolean,
+    status: String? = null,
     onClick: () -> Unit,
     focusRequester: FocusRequester? = null
 ) {
@@ -2140,21 +2142,29 @@ private fun SourceItemCard(
                     color = if (isSelected) AccentColor else Color.White
                 )
             }
-            if (isSelected) {
-                Text(
-                    text = "PLAYING",
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 0.5.sp,
-                    color = AccentColor.copy(alpha = 0.8f),
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(AccentColor.copy(alpha = 0.12f))
-                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                )
+            when {
+                isSelected -> StatusChip("PLAYING", AccentColor)
+                status == "loading" -> StatusChip("LOADING…", Color(0xFFFDBA74))
+                status == "failed" -> StatusChip("FAILED", Color(0xFFF87171))
+                status == "ok" -> StatusChip("OK", Color(0xFF6EE7B7))
             }
         }
     }
+}
+
+@Composable
+private fun StatusChip(text: String, color: Color) {
+    Text(
+        text = text,
+        fontSize = 10.sp,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = 0.5.sp,
+        color = color.copy(alpha = 0.9f),
+        modifier = Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(color.copy(alpha = 0.12f))
+            .padding(horizontal = 6.dp, vertical = 2.dp)
+    )
 }
 
 private fun Color.toArgbInt(): Int {

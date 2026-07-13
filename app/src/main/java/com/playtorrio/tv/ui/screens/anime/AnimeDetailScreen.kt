@@ -54,6 +54,7 @@ fun AnimeDetailScreen(
     val anime        by vm.selectedAnime.collectAsState()
     val episodes     by vm.episodes.collectAsState()
     val relations    by vm.relations.collectAsState()
+    val seasons      by vm.seasons.collectAsState()
     val loading      by vm.detailLoading.collectAsState()
     val epPage       by vm.episodesPage.collectAsState()
     val liked        by vm.likedIds.collectAsState()
@@ -325,6 +326,34 @@ fun AnimeDetailScreen(
                         }
                         Spacer(Modifier.width(8.dp))
                         NavButton("Next ▶", epPage < totalPages - 1) { vm.nextEpisodePage() }
+                    }
+                }
+            }
+
+            // ── Seasons ───────────────────────────────────────────────────────
+            if (seasons.isNotEmpty()) {
+                item {
+                    Spacer(Modifier.height(32.dp))
+                    SectionTitle("📚 Seasons")
+                    Spacer(Modifier.height(10.dp))
+                    LazyRow(
+                        modifier = Modifier.focusGroup(),
+                        contentPadding = PaddingValues(horizontal = 28.dp),
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    ) {
+                        itemsIndexed(seasons) { index, sea ->
+                            AnimeCard(
+                                anime = sea,
+                                label = "S${index + 1}",
+                                highlighted = sea.id == anime?.id,
+                                onClick = {
+                                    if (sea.id != anime?.id) {
+                                        vm.loadDetail(sea)
+                                        navController.navigate("anime_detail/${sea.id}") { launchSingleTop = true }
+                                    }
+                                }
+                            )
+                        }
                     }
                 }
             }

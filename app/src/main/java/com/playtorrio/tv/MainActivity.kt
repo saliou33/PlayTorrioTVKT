@@ -125,6 +125,12 @@ class MainActivity : ComponentActivity() {
                     composable("iptv") {
                         IptvScreen(navController = navController)
                     }
+                    composable("torrent_search") {
+                        com.playtorrio.tv.ui.screens.torrent.TorrentSearchScreen(navController = navController)
+                    }
+                    composable("addons") {
+                        com.playtorrio.tv.ui.screens.stremio.AddonsScreen(navController = navController)
+                    }
                     composable("manga") {
                         MangaScreen(navController = navController)
                     }
