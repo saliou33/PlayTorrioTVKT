@@ -114,6 +114,38 @@ object StreamExtractorService {
         timeoutMs: Long = 25_000L
     ): StreamResult? {
         val source = SOURCES.find { it.index == sourceIdx } ?: return null
+        // Record the attempt for the /diag web page. withTimeoutOrNull returns
+        // null on timeout, so we distinguish timeout from a genuine no-stream by
+        // comparing elapsed time against the source's timeout budget.
+        val startedAt = System.currentTimeMillis()
+        val result = try {
+            doExtract(context, source, sourceIdx, tmdbId, season, episode, timeoutMs)
+        } catch (e: Exception) {
+            val dur = System.currentTimeMillis() - startedAt
+            StreamDiagnostics.record(source.name, "error", e.message ?: e.javaClass.simpleName, dur)
+            Log.w(TAG, "[${source.name}] extraction threw: ${e.message}")
+            return null
+        }
+        val dur = System.currentTimeMillis() - startedAt
+        val budget = if (sourceIdx == 4) 3_000L else timeoutMs
+        val outcome = when {
+            result != null -> "ok"
+            dur >= budget - 300L -> "timeout"
+            else -> "no-stream"
+        }
+        StreamDiagnostics.record(source.name, outcome, result?.url?.take(120) ?: "", dur)
+        return result
+    }
+
+    private suspend fun doExtract(
+        context: Context,
+        source: Source,
+        sourceIdx: Int,
+        tmdbId: Int,
+        season: Int?,
+        episode: Int?,
+        timeoutMs: Long
+    ): StreamResult? {
         return when (source.type) {
             SourceType.WEBVIEW      -> {
                 // VsEmbed wraps its real player in a cloudnestra iframe behind

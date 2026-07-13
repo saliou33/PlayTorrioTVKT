@@ -89,6 +89,7 @@ class SettingsConfigServer(
         val method = session.method
         return when {
             method == Method.GET  && uri == "/"                       -> serveWebPage()
+            method == Method.GET  && uri == "/diag"                   -> serveDiagnostics()
             method == Method.GET  && uri == "/api/state"              -> serveState()
             method == Method.POST && uri == "/api/settings"           -> handleChange(session)
             method == Method.GET  && uri.startsWith("/api/status/")   -> serveStatus(uri)
@@ -98,6 +99,12 @@ class SettingsConfigServer(
 
     private fun serveWebPage(): Response =
         newFixedLengthResponse(Response.Status.OK, "text/html; charset=utf-8", buildHtml())
+
+    private fun serveDiagnostics(): Response =
+        newFixedLengthResponse(
+            Response.Status.OK, "text/html; charset=utf-8",
+            com.playtorrio.tv.data.streaming.StreamDiagnostics.renderHtml()
+        )
 
     private fun serveState(): Response {
         val json = gson.toJson(stateProvider())

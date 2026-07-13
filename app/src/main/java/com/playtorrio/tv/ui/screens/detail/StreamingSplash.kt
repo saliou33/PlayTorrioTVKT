@@ -81,6 +81,17 @@ fun StreamingSplash(
             isError = false
             statusText = "Finding best source…"
 
+            // Open a diagnostics session so the /diag phone page shows which
+            // sources get tried for this title and why each one fails.
+            val diagLabel = buildString {
+                append(title)
+                if (seasonNumber != null && episodeNumber != null) {
+                    append(" S%02dE%02d".format(seasonNumber, episodeNumber))
+                }
+                year?.let { append(" ($it)") }
+            }
+            com.playtorrio.tv.data.streaming.StreamDiagnostics.startSession(diagLabel)
+
             // Race sources in batches of 2 to keep WebView load light on TV boxes.
             // First batch in priority gets paired together; whichever returns a
             // stream first wins (the slower one is cancelled).
