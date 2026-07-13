@@ -26,7 +26,7 @@ object AppPreferences {
     // Bump when DEFAULT_STREAMING_SOURCE_ORDER changes meaningfully (e.g. a new
     // reliable source is added) so existing installs get re-seeded instead of
     // being stuck on a stale saved order that lacks the new source.
-    private const val CURRENT_SOURCE_ORDER_VERSION = 2
+    private const val CURRENT_SOURCE_ORDER_VERSION = 4
     private const val KEY_SAVED_ALBUM_IDS = "saved_album_ids"
     private const val KEY_SAVED_TRACK_IDS = "saved_track_ids"
     private const val KEY_MUSIC_PLAYLISTS = "music_playlists"
@@ -142,11 +142,12 @@ object AppPreferences {
         get() = prefs.getInt(KEY_STREAMING_EXTRACT_TIMEOUT_SEC, 10)
         set(value) = prefs.edit().putInt(KEY_STREAMING_EXTRACT_TIMEOUT_SEC, value.coerceIn(5, 60)).apply()
 
-    // Mobile-style priority: 111477 direct file index first (most reliable),
-    // then the TMDB-embed players, then the HTTP scrapers.
-    // 12=111477 3=Vidlink 10=VixSrc 11=VidNest 2=Videasy 1=111Movies
-    // 8=VsEmbed 4=RgShows 5=4KHDHub 6=HDHub4u 7=FlixerTV 9=Xpass
-    val DEFAULT_STREAMING_SOURCE_ORDER = listOf(12, 3, 10, 11, 2, 1, 8, 4, 5, 6, 7, 9)
+    // Priority: Xpass first (confirmed reliable), then embed players, then the
+    // other HTTP scrapers. 9=Xpass 3=Vidlink 10=VixSrc 11=VidNest 2=Videasy
+    // 1=111Movies 8=VsEmbed 13=VidSrcCC 14=EmbedSu 15=AutoEmbed 16=VidSrcTo
+    // 17=MoviesAPI 4=RgShows 5=4KHDHub 6=HDHub4u 7=FlixerTV
+    val DEFAULT_STREAMING_SOURCE_ORDER =
+        listOf(9, 3, 10, 11, 2, 1, 8, 13, 14, 15, 16, 17, 4, 5, 6, 7)
 
     var savedAlbumIds: Set<String>
         get() = prefs.getStringSet(KEY_SAVED_ALBUM_IDS, emptySet()) ?: emptySet()

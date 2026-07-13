@@ -75,10 +75,6 @@ class MainActivity : ComponentActivity() {
         CoroutineScope(Dispatchers.IO).launch {
             TorrServerService.warmup(this@MainActivity)
         }
-        // Warm the 111477 direct-index cache so the first Play Now is instant.
-        CoroutineScope(Dispatchers.IO).launch {
-            com.playtorrio.tv.data.streaming.Site111477Service.warmUp(this@MainActivity)
-        }
 
         setContent {
             PlayTorrioTheme {

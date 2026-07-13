@@ -42,6 +42,19 @@ object IptvScraper {
     private const val REDDIT_DIRECT_HOST = "https://www.reddit.com"
     // Googlebot UA is whitelisted by Reddit's anti-bot rules
     private const val GOOGLEBOT_UA = "Googlebot/2.1 (+http://www.google.com/bot.html)"
+
+    // Reddit OAuth2 "installed_client" anonymous auth — far more reliable than
+    // Googlebot/CORS-proxy hits. Uses public open-source app client IDs to get
+    // an anonymous bearer token (no account needed). Ported from the mobile app.
+    private const val OAUTH_UA = "PlayTorrio/1.0 (by /u/PlayTorrioApp)"
+    private val OAUTH_CLIENT_IDS = listOf(
+        "ohXpoqrZYub1kg", // Slide for Reddit
+        "NOe2iKrPPzwscA", // RedReader
+        "JrPdG8Z6dkWNxA", // Stealth
+    )
+    @Volatile private var oauthToken: String? = null
+    @Volatile private var oauthTokenExpiryMs: Long = 0L
+    @Volatile private var oauthClientIdx = 0
     // CORS proxies ordered by observed reliability. {URL} = URL-encoded target.
     private val FETCH_PROXIES = listOf(
         "https://corsproxy.io/?{URL}",
@@ -401,19 +414,90 @@ object IptvScraper {
     }
 
     /**
+     * Anonymous Reddit OAuth2 "installed_client" bearer token, cached and
+     * auto-refreshed, with client-ID rotation on failure. No account needed.
+     */
+    private fun getOAuthToken(): String? {
+        val now = System.currentTimeMillis()
+        oauthToken?.let { if (now < oauthTokenExpiryMs) return it }
+        for (i in OAUTH_CLIENT_IDS.indices) {
+            val idx = (oauthClientIdx + i) % OAUTH_CLIENT_IDS.size
+            val clientId = OAUTH_CLIENT_IDS[idx]
+            try {
+                val basic = Base64.encodeToString("$clientId:".toByteArray(), Base64.NO_WRAP)
+                val form = okhttp3.FormBody.Builder()
+                    .add("grant_type", "https://oauth.reddit.com/grants/installed_client")
+                    .add("device_id", "DO_NOT_TRACK_THIS_DEVICE")
+                    .build()
+                val req = Request.Builder()
+                    .url("https://www.reddit.com/api/v1/access_token")
+                    .header("User-Agent", OAUTH_UA)
+                    .header("Authorization", "Basic $basic")
+                    .post(form)
+                    .build()
+                client.newCall(req).execute().use { resp ->
+                    if (resp.code == 200) {
+                        val json = JSONObject(resp.body?.string().orEmpty())
+                        val token = json.optString("access_token").takeIf { it.isNotEmpty() }
+                        if (token != null) {
+                            oauthToken = token
+                            oauthTokenExpiryMs = now + (json.optInt("expires_in", 3600) - 60) * 1000L
+                            oauthClientIdx = idx
+                            Log.d(TAG, "[Reddit] OAuth token obtained (client #$idx)")
+                            return token
+                        }
+                    }
+                    Log.d(TAG, "[Reddit] OAuth auth failed (client #$idx): ${resp.code}")
+                }
+            } catch (e: Exception) {
+                Log.d(TAG, "[Reddit] OAuth error (client #$idx): ${e.message}")
+            }
+        }
+        oauthClientIdx = (oauthClientIdx + 1) % OAUTH_CLIENT_IDS.size
+        oauthToken = null; oauthTokenExpiryMs = 0L
+        return null
+    }
+
+    /**
      * Fetches Reddit's JSON listing.
      * Strategy:
+     *  0. OAuth2 installed_client bearer (most reliable)
      *  1. Direct hit with Googlebot UA (Reddit whitelists search crawlers)
      *  2. Each CORS proxy in turn
      * Accepts only responses that start with '{' or '['.
      */
     private fun fetchRedditJson(after: String?): String? {
-        val base = "$REDDIT_DIRECT_HOST/r/$CATALOG_SUB/new/.json?limit=100&sort=new&raw_json=1"
-        val target = if (after.isNullOrEmpty()) base else "$base&after=$after"
-
         fun looksLikeJson(body: String) = body.trimStart().let {
             it.startsWith('{') || it.startsWith('[')
         }
+
+        // 0. OAuth2 installed_client — far more reliable than proxies.
+        val token = getOAuthToken()
+        if (token != null) {
+            val oauthBase = "https://oauth.reddit.com/r/$CATALOG_SUB/new?limit=100&sort=new&raw_json=1"
+            val oauthTarget = if (after.isNullOrEmpty()) oauthBase else "$oauthBase&after=$after"
+            Log.d(TAG, "[Reddit] OAuth GET")
+            try {
+                val req = Request.Builder()
+                    .url(oauthTarget)
+                    .header("User-Agent", OAUTH_UA)
+                    .header("Authorization", "Bearer $token")
+                    .build()
+                client.newCall(req).execute().use { resp ->
+                    val body = resp.body?.string().orEmpty()
+                    if (resp.code == 200 && looksLikeJson(body)) {
+                        Log.d(TAG, "[Reddit] OAuth hit succeeded")
+                        return body
+                    }
+                    if (resp.code == 401 || resp.code == 403) { oauthToken = null; oauthTokenExpiryMs = 0L }
+                }
+            } catch (e: Exception) {
+                Log.d(TAG, "[Reddit] OAuth GET failed: ${e.message}")
+            }
+        }
+
+        val base = "$REDDIT_DIRECT_HOST/r/$CATALOG_SUB/new/.json?limit=100&sort=new&raw_json=1"
+        val target = if (after.isNullOrEmpty()) base else "$base&after=$after"
 
         // 1. Direct Googlebot hit
         Log.d(TAG, "[Reddit] direct GET (Googlebot UA)")

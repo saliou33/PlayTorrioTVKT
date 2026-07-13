@@ -172,6 +172,77 @@ object AnimeService {
     suspend fun getRecentEpisodes(perPage: Int = 20): List<AnimeCard> =
         list("UPDATED_AT_DESC", perPage = perPage, extraFilter = "status: RELEASING")
 
+    suspend fun getTop10Today(perPage: Int = 10): List<AnimeCard> =
+        list("TRENDING_DESC", perPage = perPage)
+
+    // ── Seasons chain ───────────────────────────────────────────────────────
+    // Assemble the ordered list of numbered seasons for a show by walking the
+    // AniList relation graph: back to the root via PREQUEL/PARENT, then forward
+    // via SEQUEL. Only chains through TV/TV_SHORT/ONA (movies/specials are side
+    // material, not seasons). Always includes the input anime. Ported from the
+    // mobile app's AnimeService.getSeasons.
+    suspend fun getSeasons(anilistId: Int): List<AnimeCard> {
+        val q = """
+            query (${'$'}id: Int) {
+              Media(id: ${'$'}id, type: ANIME) {
+                $MEDIA_FIELDS
+                relations { edges { relationType node { id type format } } }
+              }
+            }
+        """
+        val fetched = HashMap<Int, JSONObject>()
+        suspend fun fetch(id: Int): JSONObject? {
+            fetched[id]?.let { return it }
+            return try {
+                val media = query(q, mapOf("id" to id)).optJSONObject("Media") ?: return null
+                fetched[id] = media
+                media
+            } catch (e: Exception) {
+                Log.w(TAG, "[Seasons] fetch $id failed: ${e.message}")
+                null
+            }
+        }
+        fun neighbor(media: JSONObject, wanted: Set<String>): Int? {
+            val edges = media.optJSONObject("relations")?.optJSONArray("edges") ?: return null
+            for (i in 0 until edges.length()) {
+                val e = edges.optJSONObject(i) ?: continue
+                if (e.optString("relationType") !in wanted) continue
+                val node = e.optJSONObject("node") ?: continue
+                if (node.optString("type") != "ANIME") continue
+                if (node.optString("format") !in setOf("TV", "TV_SHORT", "ONA")) continue
+                if (node.has("id")) return node.optInt("id")
+            }
+            return null
+        }
+
+        val visited = hashSetOf(anilistId)
+        var rootId = anilistId
+        val root = fetch(anilistId)
+            ?: return try { listOf(getDetails(anilistId)) } catch (_: Exception) { emptyList() }
+
+        // 1. Walk to root via PREQUEL/PARENT.
+        var current = root
+        while (true) {
+            val p = neighbor(current, setOf("PREQUEL", "PARENT")) ?: break
+            if (!visited.add(p)) break
+            current = fetch(p) ?: break
+            rootId = p
+        }
+        // 2. Walk forward from root via SEQUEL.
+        val chain = mutableListOf(rootId)
+        current = fetch(rootId)!!
+        while (true) {
+            val s = neighbor(current, setOf("SEQUEL")) ?: break
+            if (!visited.add(s)) break
+            current = fetch(s) ?: break
+            chain.add(s)
+        }
+        // 3. Always include the input anime.
+        if (!chain.contains(anilistId)) chain.add(anilistId)
+
+        return chain.mapNotNull { fetched[it] }.map { AnimeCard.fromJson(it.toMap()) }
+    }
+
     // ── Search ────────────────────────────────────────────────────────────────
     suspend fun search(term: String, page: Int = 1, perPage: Int = 30): List<AnimeCard> {
         if (term.isBlank()) return emptyList()
