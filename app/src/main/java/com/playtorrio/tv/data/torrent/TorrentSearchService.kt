@@ -21,7 +21,8 @@ object TorrentSearchService {
         val uindex = async { runCatching { searchUindex(q) }.getOrDefault(emptyList()) }
         val knaben = async { runCatching { searchKnaben(q) }.getOrDefault(emptyList()) }
         val tpb = async { runCatching { searchApibay(q) }.getOrDefault(emptyList()) }
-        val all = uindex.await() + knaben.await() + tpb.await()
+        val nyaa = async { runCatching { searchNyaa(q) }.getOrDefault(emptyList()) }
+        val all = uindex.await() + knaben.await() + tpb.await() + nyaa.await()
         deduplicateResults(all).sortedByDescending { it.seeders }
     }
 
@@ -48,11 +49,96 @@ object TorrentSearchService {
         return if (i <= 1) "${v.toInt()} ${units[i]}" else String.format("%.1f %s", v, units[i])
     }
 
-    /** ThePirateBay via the apibay JSON API — reliable (no HTML scraping). */
-    private suspend fun searchApibay(query: String): List<TorrentResult> = withContext(Dispatchers.IO) {
+    /** Nyaa.si — the best anime torrent index. Uses its RSS feed (stable),
+     *  which exposes info-hash / seeders / size per item. */
+    private suspend fun searchNyaa(query: String): List<TorrentResult> = withContext(Dispatchers.IO) {
         val out = mutableListOf<TorrentResult>()
         try {
-            val url = "https://apibay.org/q.php?q=${URLEncoder.encode(query, "UTF-8")}&cat=0"
+            val url = "https://nyaa.si/?page=rss&q=${URLEncoder.encode(query, "UTF-8")}&c=0_0&f=0"
+            val xml = URL(url).openConnection().apply {
+                setRequestProperty("User-Agent", "Mozilla/5.0")
+                connectTimeout = 10_000; readTimeout = 12_000
+            }.getInputStream().bufferedReader().use { it.readText() }
+
+            val itemRe = Pattern.compile("<item>(.*?)</item>", Pattern.DOTALL)
+            val titleRe = Pattern.compile("<title>(?:<!\\[CDATA\\[)?(.*?)(?:\\]\\]>)?</title>", Pattern.DOTALL)
+            val hashRe = Pattern.compile("<nyaa:infoHash>(.*?)</nyaa:infoHash>")
+            val seedRe = Pattern.compile("<nyaa:seeders>(\\d+)</nyaa:seeders>")
+            val leechRe = Pattern.compile("<nyaa:leechers>(\\d+)</nyaa:leechers>")
+            val sizeRe = Pattern.compile("<nyaa:size>(.*?)</nyaa:size>")
+
+            val items = itemRe.matcher(xml)
+            while (items.find()) {
+                val block = items.group(1) ?: continue
+                val hash = hashRe.matcher(block).let { if (it.find()) it.group(1) else null } ?: continue
+                val name = titleRe.matcher(block).let { if (it.find()) it.group(1)?.trim() else null } ?: continue
+                val seeders = seedRe.matcher(block).let { if (it.find()) it.group(1)?.toIntOrNull() else null } ?: 0
+                val leechers = leechRe.matcher(block).let { if (it.find()) it.group(1)?.toIntOrNull() else null } ?: 0
+                val size = sizeRe.matcher(block).let { if (it.find()) it.group(1) else null } ?: ""
+                out.add(
+                    TorrentResult(
+                        name = name,
+                        magnetLink = magnetFromHash(hash, name),
+                        size = size,
+                        seeders = seeders,
+                        leechers = leechers,
+                        source = "Nyaa",
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "nyaa search failed: $query", e)
+        }
+        out
+    }
+
+    // Torrent categories for the hub. apibayCat = ThePirateBay category code
+    // (0 = all). Anime is served best by Nyaa. topQuery hits apibay's top-100.
+    enum class TorrentCategory(val label: String, val apibayCat: String, val topQuery: String, val nyaaOnly: Boolean = false) {
+        ALL("All", "0", "top100:all"),
+        MOVIES("Movies", "201", "top100:201"),
+        HD_MOVIES("4K/HD Movies", "207", "top100:207"),
+        TV("Series", "205", "top100:205"),
+        HD_TV("4K/HD Series", "208", "top100:208"),
+        ANIME("Anime", "0", "top100:all", nyaaOnly = true),
+        MUSIC("Music", "100", "top100:100"),
+        GAMES("Games", "400", "top100:400"),
+        SOFTWARE("Software", "300", "top100:300"),
+        BOOKS("Books", "601", "top100:601"),
+        XXX("XXX", "500", "top100:500"),
+    }
+
+    /** Category-aware search for the hub. */
+    suspend fun searchCategory(query: String, cat: TorrentCategory): List<TorrentResult> = coroutineScope {
+        val q = query.trim()
+        if (q.isBlank()) return@coroutineScope emptyList()
+        if (cat.nyaaOnly) {
+            return@coroutineScope deduplicateResults(
+                runCatching { searchNyaa(q) }.getOrDefault(emptyList())
+            ).sortedByDescending { it.seeders }
+        }
+        val uindex = async { runCatching { searchUindex(q) }.getOrDefault(emptyList()) }
+        val knaben = async { runCatching { searchKnaben(q) }.getOrDefault(emptyList()) }
+        val tpb = async { runCatching { searchApibay(q, cat.apibayCat) }.getOrDefault(emptyList()) }
+        deduplicateResults(uindex.await() + knaben.await() + tpb.await()).sortedByDescending { it.seeders }
+    }
+
+    /** Popular torrents for the landing page (per category). */
+    suspend fun popular(cat: TorrentCategory): List<TorrentResult> = withContext(Dispatchers.IO) {
+        if (cat.nyaaOnly) {
+            // Nyaa has no top-100; show the newest highly-seeded anime instead.
+            return@withContext runCatching { searchNyaa("1080p") }.getOrDefault(emptyList())
+                .sortedByDescending { it.seeders }.take(50)
+        }
+        runCatching { searchApibay(cat.topQuery, cat.apibayCat) }.getOrDefault(emptyList())
+            .sortedByDescending { it.seeders }.take(50)
+    }
+
+    /** ThePirateBay via the apibay JSON API — reliable (no HTML scraping). */
+    private suspend fun searchApibay(query: String, cat: String = "0"): List<TorrentResult> = withContext(Dispatchers.IO) {
+        val out = mutableListOf<TorrentResult>()
+        try {
+            val url = "https://apibay.org/q.php?q=${URLEncoder.encode(query, "UTF-8")}&cat=$cat"
             val body = URL(url).openConnection().apply {
                 setRequestProperty("User-Agent", "Mozilla/5.0")
                 connectTimeout = 10_000; readTimeout = 12_000

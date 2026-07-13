@@ -29,6 +29,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.items
@@ -93,6 +95,7 @@ import coil.compose.AsyncImage
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.LiveTv
@@ -655,7 +658,9 @@ private fun NavPill(
             ) {
                 if (expanded) {
                     Column(
-                        modifier = Modifier.padding((8.dp * scale).coerceAtLeast(4.dp)),
+                        modifier = Modifier
+                            .verticalScroll(rememberScrollState())
+                            .padding((8.dp * scale).coerceAtLeast(4.dp)),
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         NavPillItem(
@@ -710,6 +715,13 @@ private fun NavPill(
                         )
                         NavPillItem(
                             icon = Icons.Filled.LiveTv,
+                            label = "Live TV",
+                            isActive = false,
+                            onClicked = { navController.navigate("live_tv") },
+                            onExitRight = onExitToContent,
+                        )
+                        NavPillItem(
+                            icon = Icons.Filled.Dns,
                             label = "IPTV",
                             isActive = false,
                             onClicked = { navController.navigate("iptv") },

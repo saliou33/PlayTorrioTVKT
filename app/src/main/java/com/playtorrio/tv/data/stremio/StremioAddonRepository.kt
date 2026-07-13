@@ -20,7 +20,7 @@ object StremioAddonRepository {
 
     private const val PREFS_BASE = "stremio_prefs"
     private const val KEY_ADDONS = "installed_addons"
-    private const val KEY_DEFAULTS_SEEDED = "defaults_seeded_v1"
+    private const val KEY_DEFAULTS_SEEDED = "defaults_seeded_v2"
     private const val TAG = "StremioAddonRepo"
 
     data class RecommendedAddon(
@@ -37,19 +37,54 @@ object StremioAddonRepository {
      */
     val RECOMMENDED_ADDONS = listOf(
         RecommendedAddon(
+            "Cinemeta",
+            "Official catalogs — Popular & Featured movies and series (browsable)",
+            "https://v3-cinemeta.strem.io/manifest.json",
+        ),
+        RecommendedAddon(
             "Torrentio",
             "Torrents from YTS, EZTV, 1337x, TPB, RARBG, TorrentGalaxy, Nyaa… (debrid-ready)",
             "https://torrentio.strem.fun/manifest.json",
+        ),
+        RecommendedAddon(
+            "Anime Kitsu",
+            "Anime catalogs & metadata from Kitsu (browsable)",
+            "https://anime-kitsu.strem.fun/manifest.json",
         ),
         RecommendedAddon(
             "KnightCrawler",
             "Community torrent aggregator (debrid-ready)",
             "https://knightcrawler.elfhosted.com/manifest.json",
         ),
+        RecommendedAddon(
+            "OpenSubtitles v3",
+            "Subtitles for almost everything, many languages",
+            "https://opensubtitles-v3.strem.io/manifest.json",
+        ),
+        RecommendedAddon(
+            "Comet",
+            "Debrid-aware torrent/stream aggregator",
+            "https://comet.elfhosted.com/manifest.json",
+        ),
+        RecommendedAddon(
+            "USA TV",
+            "Live US TV channels catalog (browsable)",
+            "https://848b3516657c-usatv.baby-beamup.club/manifest.json",
+        ),
     )
 
-    /** Manifest URLs auto-installed on first run so torrents work out of the box. */
-    private val DEFAULT_MANIFESTS = listOf(RECOMMENDED_ADDONS.first().manifestUrl)
+    /** Manifest URLs auto-installed on first run — a mix of browsable catalogs
+     *  (Cinemeta, Anime Kitsu), torrent streams (Torrentio, KnightCrawler) and
+     *  subtitles (OpenSubtitles) so everything works out of the box. */
+    private val DEFAULT_MANIFESTS = listOf(
+        "https://v3-cinemeta.strem.io/manifest.json",
+        "https://torrentio.strem.fun/manifest.json",
+        "https://anime-kitsu.strem.fun/manifest.json",
+        "https://knightcrawler.elfhosted.com/manifest.json",
+        "https://opensubtitles-v3.strem.io/manifest.json",
+    )
+
+    fun isInstalled(manifestId: String): Boolean = getAddons().any { it.manifest.id == manifestId }
 
     private lateinit var prefs: SharedPreferences
 

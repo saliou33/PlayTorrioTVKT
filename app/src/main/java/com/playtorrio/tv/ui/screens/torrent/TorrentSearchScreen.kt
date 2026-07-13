@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Whatshot
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,14 +42,23 @@ import androidx.navigation.NavController
 import com.playtorrio.tv.PlayerActivity
 import com.playtorrio.tv.data.torrent.TorrentResult
 import com.playtorrio.tv.data.torrent.TorrentSearchService
+import com.playtorrio.tv.data.torrent.TorrentSearchService.TorrentCategory
 import kotlinx.coroutines.launch
 
 private val Accent = Color(0xFF818CF8)
 private val Bg = Color(0xFF0B0B0F)
 private val Surface = Color.White.copy(alpha = 0.06f)
 
-// Quick filters appended to the query — practical "categories" for torrents.
-private val FILTERS = listOf("All", "1080p", "2160p", "x265", "Anime")
+private fun qualityOf(name: String): String? {
+    val n = name.lowercase()
+    return when {
+        n.contains("2160") || n.contains("4k") -> "4K"
+        n.contains("1080") -> "1080p"
+        n.contains("720") -> "720p"
+        n.contains("480") -> "480p"
+        else -> null
+    }
+}
 
 @Composable
 fun TorrentSearchScreen(navController: NavController) {
@@ -56,62 +66,53 @@ fun TorrentSearchScreen(navController: NavController) {
     val scope = rememberCoroutineScope()
 
     var query by remember { mutableStateOf("") }
-    var filter by remember { mutableStateOf("All") }
+    var category by remember { mutableStateOf(TorrentCategory.ALL) }
     var results by remember { mutableStateOf<List<TorrentResult>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
-    var searched by remember { mutableStateOf(false) }
+    var showingPopular by remember { mutableStateOf(true) }
 
     val searchFocus = remember { FocusRequester() }
 
-    fun runSearch() {
-        val q = (query.trim() + if (filter == "All") "" else " $filter").trim()
-        if (q.isBlank()) return
-        loading = true
-        searched = true
-        scope.launch {
-            results = runCatching { TorrentSearchService.searchRaw(q) }.getOrDefault(emptyList())
+    // Debounced search-as-you-type: re-runs whenever the query or category
+    // changes; a blank query shows the Popular list for the category. The
+    // LaunchedEffect restart cancels the previous 450ms wait, so we only hit
+    // the network after the user pauses typing.
+    LaunchedEffect(query, category) {
+        val q = query.trim()
+        if (q.isBlank()) {
+            showingPopular = true
+            loading = true
+            results = runCatching { TorrentSearchService.popular(category) }.getOrDefault(emptyList())
+            loading = false
+        } else {
+            showingPopular = false
+            kotlinx.coroutines.delay(450)
+            loading = true
+            results = runCatching { TorrentSearchService.searchCategory(q, category) }.getOrDefault(emptyList())
             loading = false
         }
     }
 
     fun play(result: TorrentResult) {
-        val intent = Intent(context, PlayerActivity::class.java).apply {
+        context.startActivity(Intent(context, PlayerActivity::class.java).apply {
             putExtra("magnetUri", result.magnetLink)
             putExtra("title", result.name)
             putExtra("isMovie", true)
             putExtra("tmdbId", -1)
-        }
-        context.startActivity(intent)
+        })
     }
 
     LaunchedEffect(Unit) { runCatching { searchFocus.requestFocus() } }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Bg)
-            .padding(horizontal = 40.dp, vertical = 28.dp)
-    ) {
-        Text("Torrent Search", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(4.dp))
-        Text(
-            "Search torrents across indexers and play instantly via the built-in engine",
-            color = Color.White.copy(0.5f), fontSize = 13.sp
-        )
-        Spacer(Modifier.height(20.dp))
+    Column(Modifier.fillMaxSize().background(Bg).padding(horizontal = 40.dp, vertical = 24.dp)) {
+        Text("Torrent Search", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(12.dp))
 
         // Search box
         var boxFocused by remember { mutableStateOf(false) }
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(10.dp))
-                .background(Surface)
-                .border(
-                    width = if (boxFocused) 2.dp else 1.dp,
-                    color = if (boxFocused) Accent else Color.White.copy(0.12f),
-                    shape = RoundedCornerShape(10.dp)
-                )
+            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Surface)
+                .border(if (boxFocused) 2.dp else 1.dp, if (boxFocused) Accent else Color.White.copy(0.12f), RoundedCornerShape(10.dp))
                 .padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -119,60 +120,54 @@ fun TorrentSearchScreen(navController: NavController) {
             Spacer(Modifier.width(10.dp))
             Box(Modifier.weight(1f)) {
                 BasicTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    singleLine = true,
+                    value = query, onValueChange = { query = it }, singleLine = true,
                     textStyle = TextStyle(color = Color.White, fontSize = 16.sp),
                     cursorBrush = SolidColor(Accent),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = { runSearch() }),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .focusRequester(searchFocus)
-                        .onFocusChanged { boxFocused = it.isFocused }
+                    keyboardActions = KeyboardActions(onSearch = { /* auto via debounce */ }),
+                    modifier = Modifier.fillMaxWidth().focusRequester(searchFocus).onFocusChanged { boxFocused = it.isFocused }
                 )
-                if (query.isEmpty()) {
-                    Text("Search movies, shows, anime…", color = Color.White.copy(0.3f), fontSize = 16.sp)
-                }
+                if (query.isEmpty()) Text("Search movies, shows, anime, music, games…", color = Color.White.copy(0.3f), fontSize = 16.sp)
             }
         }
 
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(12.dp))
 
-        // Quick-filter chips
+        // Category chips
         LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            items(FILTERS) { f ->
+            items(TorrentCategory.entries.toList()) { cat ->
                 var chipFocused by remember { mutableStateOf(false) }
-                val selected = f == filter
+                val selected = cat == category
                 Text(
-                    text = f,
+                    text = cat.label,
                     color = if (selected || chipFocused) Color.White else Color.White.copy(0.7f),
-                    fontSize = 13.sp,
-                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(999.dp))
+                    fontSize = 13.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                    modifier = Modifier.clip(RoundedCornerShape(999.dp))
                         .background(if (selected) Accent.copy(0.35f) else Surface)
-                        .border(
-                            width = if (chipFocused) 2.dp else 1.dp,
-                            color = if (chipFocused) Accent else Color.White.copy(0.12f),
-                            shape = RoundedCornerShape(999.dp)
-                        )
-                        .onFocusChanged { chipFocused = it.isFocused }
-                        .focusable()
-                        .clickable { filter = f; if (searched) runSearch() }
+                        .border(if (chipFocused) 2.dp else 1.dp, if (chipFocused) Accent else Color.White.copy(0.12f), RoundedCornerShape(999.dp))
+                        .onFocusChanged { chipFocused = it.isFocused }.focusable()
+                        .clickable { category = cat }
                         .padding(horizontal = 14.dp, vertical = 6.dp)
                 )
             }
         }
 
-        Spacer(Modifier.height(18.dp))
+        Spacer(Modifier.height(16.dp))
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (showingPopular) Icon(Icons.Filled.Whatshot, null, tint = Accent, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text(
+                if (showingPopular) "Popular · ${category.label}" else "Results · ${category.label}",
+                color = Color.White.copy(0.7f), fontSize = 13.sp, fontWeight = FontWeight.Bold
+            )
+        }
+        Spacer(Modifier.height(10.dp))
 
         when {
-            loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = Accent)
-            }
-            searched && results.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("No torrents found. Try a different search.", color = Color.White.copy(0.5f))
+            loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Accent) }
+            results.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("Nothing found. Try another search or category.", color = Color.White.copy(0.5f))
             }
             else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 itemsIndexed(results) { _, r -> TorrentRow(r) { play(r) } }
@@ -184,27 +179,17 @@ fun TorrentSearchScreen(navController: NavController) {
 @Composable
 private fun TorrentRow(result: TorrentResult, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
+    val quality = qualityOf(result.name)
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
             .background(if (focused) Color.White.copy(0.14f) else Surface)
-            .border(
-                width = if (focused) 2.dp else 0.dp,
-                color = if (focused) Accent else Color.Transparent,
-                shape = RoundedCornerShape(10.dp)
-            )
-            .onFocusChanged { focused = it.isFocused }
-            .focusable()
-            .clickable { onClick() }
+            .border(if (focused) 2.dp else 0.dp, if (focused) Accent else Color.Transparent, RoundedCornerShape(10.dp))
+            .onFocusChanged { focused = it.isFocused }.focusable().clickable { onClick() }
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(Modifier.weight(1f)) {
-            Text(
-                result.name, color = Color.White, fontSize = 14.sp,
-                maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 18.sp
-            )
+            Text(result.name, color = Color.White, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 18.sp)
             Spacer(Modifier.height(4.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Filled.People, null, tint = Color(0xFF6EE7B7), modifier = Modifier.size(13.dp))
@@ -214,6 +199,14 @@ private fun TorrentRow(result: TorrentResult, onClick: () -> Unit) {
                 Text(result.size, color = Color.White.copy(0.6f), fontSize = 12.sp)
                 Spacer(Modifier.width(12.dp))
                 Text(result.source, color = Accent.copy(0.9f), fontSize = 11.sp)
+                if (quality != null) {
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        quality, color = Color(0xFFFDBA74), fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(Color(0xFFFDBA74).copy(0.15f))
+                            .padding(horizontal = 6.dp, vertical = 1.dp)
+                    )
+                }
             }
         }
         Icon(Icons.Filled.Download, null, tint = Accent, modifier = Modifier.size(22.dp))

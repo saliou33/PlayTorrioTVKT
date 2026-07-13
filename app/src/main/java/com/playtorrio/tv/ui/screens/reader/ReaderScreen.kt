@@ -55,6 +55,10 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.filled.SwapVert
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.playtorrio.tv.data.reader.ComicImageLoader
@@ -66,7 +70,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private enum class ReaderMode { PAGE, ZOOM, DRAG }
+private enum class ReaderMode { PAGE, SCROLL, ZOOM, DRAG }
 
 /**
  * Shared D-pad reader. Three OK-toggled modes:
@@ -114,6 +118,21 @@ fun ReaderScreen(navController: NavController) {
     var mode by remember { mutableStateOf(ReaderMode.PAGE) }
     var modeBannerKey by remember { mutableIntStateOf(0) }
 
+    // Vertical (webtoon) scroll state + background page prefetch.
+    val scrollState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val scrollScope = rememberCoroutineScope()
+
+    // Prefetch the next few pages into Coil's cache so paging/scrolling never
+    // waits on a network fetch.
+    LaunchedEffect(readerState.pageIndex, readerState.pageUrls.size) {
+        val urls = readerState.pageUrls
+        val from = readerState.pageIndex + 1
+        for (i in from until (from + 4).coerceAtMost(urls.size)) {
+            val req = ImageRequest.Builder(ctx).data(urls[i]).build()
+            ComicImageLoader.get(ctx).enqueue(req)
+        }
+    }
+
     var scale by remember { mutableFloatStateOf(1f) }
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
@@ -134,7 +153,8 @@ fun ReaderScreen(navController: NavController) {
                     }
                     Key.Enter, Key.NumPadEnter, Key.DirectionCenter -> {
                         mode = when (mode) {
-                            ReaderMode.PAGE -> ReaderMode.ZOOM
+                            ReaderMode.PAGE -> ReaderMode.SCROLL
+                            ReaderMode.SCROLL -> ReaderMode.ZOOM
                             ReaderMode.ZOOM -> ReaderMode.DRAG
                             ReaderMode.DRAG -> {
                                 // Returning to PAGE — reset zoom & pan so the next page fits.
@@ -147,16 +167,21 @@ fun ReaderScreen(navController: NavController) {
                     }
                     Key.DirectionLeft -> when (mode) {
                         ReaderMode.PAGE -> { vm.prevPage(); resetPan(); scale = 1f; true }
+                        ReaderMode.SCROLL -> true
                         ReaderMode.ZOOM -> true
                         ReaderMode.DRAG -> { offsetX += panStep(scale); true }
                     }
                     Key.DirectionRight -> when (mode) {
                         ReaderMode.PAGE -> { vm.nextPage(); resetPan(); scale = 1f; true }
+                        ReaderMode.SCROLL -> true
                         ReaderMode.ZOOM -> true
                         ReaderMode.DRAG -> { offsetX -= panStep(scale); true }
                     }
                     Key.DirectionUp -> when (mode) {
                         ReaderMode.PAGE -> true
+                        ReaderMode.SCROLL -> {
+                            scrollScope.launch { scrollState.animateScrollBy(-900f) }; true
+                        }
                         ReaderMode.ZOOM -> {
                             scale = (scale * 1.25f).coerceAtMost(5f); true
                         }
@@ -164,6 +189,9 @@ fun ReaderScreen(navController: NavController) {
                     }
                     Key.DirectionDown -> when (mode) {
                         ReaderMode.PAGE -> true
+                        ReaderMode.SCROLL -> {
+                            scrollScope.launch { scrollState.animateScrollBy(900f) }; true
+                        }
                         ReaderMode.ZOOM -> {
                             scale = (scale / 1.25f).coerceAtLeast(1f)
                             if (scale <= 1.0001f) resetPan()
@@ -175,27 +203,45 @@ fun ReaderScreen(navController: NavController) {
                 }
             }
     ) {
-        // ── Page image ──
+        // ── Pages ──
         val state = vm.state.value
-        val url = state.pageUrls.getOrNull(state.pageIndex)
-        if (url != null) {
-            AsyncImage(
-                model = ImageRequest.Builder(ctx)
-                    .data(url)
-                    .crossfade(true)
-                    .build(),
-                imageLoader = ComicImageLoader.get(ctx),
-                contentDescription = null,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        scaleX = scale
-                        scaleY = scale
-                        translationX = offsetX
-                        translationY = offsetY
-                    }
-            )
+        if (mode == ReaderMode.SCROLL) {
+            // Vertical webtoon: all pages stacked, DPAD up/down scrolls.
+            LazyColumn(
+                state = scrollState,
+                modifier = Modifier.fillMaxSize()
+            ) {
+                items(state.pageUrls) { pageUrl ->
+                    AsyncImage(
+                        model = ImageRequest.Builder(ctx).data(pageUrl).crossfade(true).build(),
+                        imageLoader = ComicImageLoader.get(ctx),
+                        contentDescription = null,
+                        contentScale = ContentScale.FillWidth,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        } else {
+            val url = state.pageUrls.getOrNull(state.pageIndex)
+            if (url != null) {
+                AsyncImage(
+                    model = ImageRequest.Builder(ctx)
+                        .data(url)
+                        .crossfade(true)
+                        .build(),
+                    imageLoader = ComicImageLoader.get(ctx),
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            scaleX = scale
+                            scaleY = scale
+                            translationX = offsetX
+                            translationY = offsetY
+                        }
+                )
+            }
         }
 
         // ── Loading overlay ──
@@ -261,16 +307,19 @@ private fun panStep(scale: Float): Float = (120f * scale).coerceAtMost(420f)
 private fun ModePill(mode: ReaderMode, visible: Boolean, modifier: Modifier = Modifier) {
     val bg = when (mode) {
         ReaderMode.PAGE -> Color(0xFF818CF8)
+        ReaderMode.SCROLL -> Color(0xFF34D399)
         ReaderMode.ZOOM -> Color(0xFFC084FC)
         ReaderMode.DRAG -> Color(0xFF38BDF8)
     }
     val icon = when (mode) {
         ReaderMode.PAGE -> Icons.Filled.SwapHoriz
+        ReaderMode.SCROLL -> Icons.Filled.SwapVert
         ReaderMode.ZOOM -> Icons.Filled.ZoomIn
         ReaderMode.DRAG -> Icons.Filled.OpenWith
     }
     val label = when (mode) {
         ReaderMode.PAGE -> "PAGE"
+        ReaderMode.SCROLL -> "SCROLL"
         ReaderMode.ZOOM -> "ZOOM"
         ReaderMode.DRAG -> "DRAG"
     }
@@ -299,7 +348,8 @@ private fun ModeBanner(mode: ReaderMode, key: Int, modifier: Modifier = Modifier
     }
     val alpha by animateFloatAsState(if (visible) 1f else 0f, tween(250), label = "ba")
     val text = when (mode) {
-        ReaderMode.PAGE -> "Press OK to enter Zoom mode  •  ◀ ▶ change pages"
+        ReaderMode.PAGE -> "OK → Scroll mode  •  ◀ ▶ change pages"
+        ReaderMode.SCROLL -> "▲ ▼ scroll  •  OK → Zoom mode"
         ReaderMode.ZOOM -> "▲ zoom in  •  ▼ zoom out  •  OK → Drag mode"
         ReaderMode.DRAG -> "D-pad to pan  •  OK → back to Page mode"
     }

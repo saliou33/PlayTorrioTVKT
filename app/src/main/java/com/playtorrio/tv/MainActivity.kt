@@ -131,6 +131,9 @@ class MainActivity : ComponentActivity() {
                     composable("addons") {
                         com.playtorrio.tv.ui.screens.stremio.AddonsScreen(navController = navController)
                     }
+                    composable("live_tv") {
+                        com.playtorrio.tv.ui.screens.iptv.LiveTvScreen(navController = navController)
+                    }
                     composable("manga") {
                         MangaScreen(navController = navController)
                     }

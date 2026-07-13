@@ -121,6 +121,43 @@ fun AddonsScreen(navController: NavController) {
             }
         }
 
+        Spacer(Modifier.height(18.dp))
+
+        // Suggested addons discovery row
+        Text("Suggested addons", color = Color.White.copy(0.7f), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(StremioAddonRepository.RECOMMENDED_ADDONS) { rec ->
+                var focused by remember { mutableStateOf(false) }
+                Column(
+                    modifier = Modifier
+                        .width(220.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (focused) Color.White.copy(0.12f) else Surface)
+                        .border(if (focused) 2.dp else 1.dp, if (focused) Accent else Color.White.copy(0.1f), RoundedCornerShape(12.dp))
+                        .onFocusChanged { focused = it.isFocused }
+                        .focusable()
+                        .clickable {
+                            scope.launch {
+                                val r = StremioAddonRepository.installAddon(rec.manifestUrl)
+                                refresh()
+                                Toast.makeText(context,
+                                    if (r.isSuccess) "Added ${rec.name}" else "Failed: ${r.exceptionOrNull()?.message}",
+                                    Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                        .padding(14.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(rec.name, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                        Icon(Icons.Filled.Add, null, tint = Accent, modifier = Modifier.size(18.dp))
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text(rec.description, color = Color.White.copy(0.55f), fontSize = 11.sp, maxLines = 3)
+                }
+            }
+        }
+
         Spacer(Modifier.height(20.dp))
 
         if (addons.isEmpty()) {
