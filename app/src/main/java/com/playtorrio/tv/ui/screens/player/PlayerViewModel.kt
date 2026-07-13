@@ -265,6 +265,35 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
      *  miss the seconds spent reconnecting. C.TIME_UNSET = no saved position. */
     private var iptvSavedUnixMs: Long = C.TIME_UNSET
 
+    // ── VOD (movies/shows/anime/torrent) stall watchdog & recovery ────────────
+    // Same idea as the IPTV watchdog but for on-demand playback. Scraper streams
+    // and torrents frequently "play a bit then freeze" — the socket dies or the
+    // chunk loader hangs WITHOUT ExoPlayer emitting onPlayerError, so nothing
+    // kicks it back to life. We poll player state and recover, always resuming
+    // at the frozen position (never restarting from 0) and, in streaming mode,
+    // falling back to the next source once local recovery is exhausted.
+    private var vodWatchdogJob: Job? = null
+    private var vodRecoveryAttempt: Int = 0
+    private val vodMaxRetries: Int = 5
+    private var lastVodRecoveryAt: Long = 0L
+    /** Wallclock (ms) when STATE_BUFFERING began. 0 = not buffering. */
+    private var vodBufferingSinceMs: Long = 0L
+    /** Last observed currentPosition while playing, and when it last changed. */
+    private var vodLastPositionMs: Long = -1L
+    private var vodLastPositionAt: Long = 0L
+    /** Wallclock (ms) of the last healthy progress tick (used by detector 3). */
+    private var vodLastHealthyAt: Long = 0L
+    /** When the current healthy-playback streak began. 0 = no active streak. */
+    private var vodHealthyStreakStartMs: Long = 0L
+    /** Buffering longer than this (playWhenReady=true) → stall. Torrents get a
+     *  longer grace period since slow-seed buffering is legitimate. */
+    private val vodBufferingStallMs: Long = 20_000L
+    private val vodMagnetBufferingStallMs: Long = 45_000L
+    /** Position not advancing this long while READY+playing → frozen. */
+    private val vodFrozenPositionMs: Long = 12_000L
+    /** Reset the retry counter after this much continuous healthy playback. */
+    private val vodHealthyResetMs: Long = 10_000L
+
     // ── Continue-watching context (set once by PlayerActivity from intent extras) ──
     private var currentMagnetUri: String? = null
     private var resumePosterUrl: String? = null
@@ -329,14 +358,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     /** Track sources we already failed on this session so we don't cycle back. */
     private val failedSourceIndices = mutableSetOf<Int>()
 
-    private fun tryNextSource(failedError: PlaybackException) {
+    private fun tryNextSource(reason: String) {
         val state = _uiState.value
         // IPTV streams have no fallback sources — surface the error directly.
         if (state.isIptv) {
             _uiState.update {
                 it.copy(
                     isConnecting = false,
-                    error = "Stream failed: ${failedError.errorCodeName}",
+                    error = "Stream failed: $reason",
                 )
             }
             return
@@ -348,7 +377,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             val nextIdx = currentIdx + 1
             if (nextIdx in list.indices) {
                 val nextEmbed = list[nextIdx]
-                Log.i(TAG, "Stream failed (${failedError.errorCodeName}), switching to anime embed ${nextEmbed.server}")
+                Log.i(TAG, "Stream failed ($reason), switching to anime embed ${nextEmbed.server}")
                 _uiState.update {
                     it.copy(
                         isConnecting = true,
@@ -372,7 +401,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val nextIdx = orderedSourceIndices.firstOrNull { it !in failedSourceIndices }
         if (nextIdx != null) {
             val sourceName = StreamExtractorService.SOURCES.find { it.index == nextIdx }?.name ?: "source"
-            Log.i(TAG, "Stream failed (${failedError.errorCodeName}), switching to $sourceName")
+            Log.i(TAG, "Stream failed ($reason), switching to $sourceName")
             _uiState.update {
                 it.copy(
                     isConnecting = true,
@@ -381,11 +410,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
             switchToSource(nextIdx)
         } else {
-            Log.w(TAG, "All sources exhausted after ${failedError.errorCodeName}")
+            Log.w(TAG, "All sources exhausted after $reason")
             _uiState.update {
                 it.copy(
                     isConnecting = false,
-                    error = "All sources failed: ${failedError.errorCodeName}"
+                    error = "All sources failed: $reason"
                 )
             }
         }
@@ -395,9 +424,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val url = currentStreamUrl ?: return
         if (streamRetryJob?.isActive == true) return
 
-        // In streaming mode, don't retry the same source — find another one
+        // In streaming mode, don't retry the same source — find another one.
+        // Preserve the playback position so the next source resumes where we
+        // failed instead of restarting from the beginning.
         if (_uiState.value.isStreamingMode) {
-            tryNextSource(error)
+            val resumePos = exo.currentPosition.coerceAtLeast(0L)
+            if (resumePos > 5_000L) pendingSeekMs = resumePos
+            tryNextSource(error.errorCodeName)
             return
         }
 
@@ -426,6 +459,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
             startupRetryCount = attempt
             Log.w(TAG, "Retrying stream startup attempt $attempt due to ${error.errorCodeName}")
+
+            // Preserve position for mid-playback errors so we resume instead of
+            // restarting from 0. (At true startup this is ~0 and is a no-op.)
+            val resumePos = exo.currentPosition.coerceAtLeast(0L)
+            if (resumePos > 5_000L) pendingSeekMs = resumePos
 
             exo.stop()
             exo.clearMediaItems()
@@ -654,6 +692,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         })
 
         startPositionUpdater()
+        startVodWatchdog(exo)
         scheduleControlsHide()
     }
 
@@ -1228,6 +1267,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         seekOverlayHideJob?.cancel()
         streamRetryJob?.cancel()
         iptvWatchdogJob?.cancel()
+        vodWatchdogJob?.cancel()
         player?.release()
         player = null
 
@@ -1645,6 +1685,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         })
 
         startPositionUpdater()
+        startVodWatchdog(exo)
         scheduleControlsHide()
     }
 
@@ -1658,6 +1699,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private fun createIptvPlayer(streamUrl: String, referer: String) {
         val context = getApplication<Application>()
         resetStartupRetryState()
+        stopVodWatchdog()
         stopIptvWatchdog()
         iptvRetryAttempt = 0
         currentReferer = referer
@@ -2089,6 +2131,209 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "IPTV recover attempt $attempt threw: ${e.message}")
+            }
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  VOD stall watchdog — attached by createPlayer / createStreamingPlayer.
+    //  IPTV uses its own (createIptvPlayer); this one never runs for isIptv.
+    // ─────────────────────────────────────────────────────────────────────────
+    private fun stopVodWatchdog() {
+        vodWatchdogJob?.cancel()
+        vodWatchdogJob = null
+    }
+
+    private fun startVodWatchdog(exo: ExoPlayer) {
+        stopVodWatchdog()
+        vodRecoveryAttempt = 0
+        lastVodRecoveryAt = 0L
+        vodBufferingSinceMs = 0L
+        vodLastPositionMs = -1L
+        vodLastPositionAt = System.currentTimeMillis()
+        vodLastHealthyAt = System.currentTimeMillis()
+        vodHealthyStreakStartMs = 0L
+
+        vodWatchdogJob = viewModelScope.launch {
+            while (true) {
+                delay(1_000L)
+                val current = player ?: return@launch
+                if (current !== exo) return@launch   // player rebuilt — old watchdog dies
+                val s = _uiState.value
+                if (s.isIptv) return@launch           // IPTV has its own watchdog
+
+                // Don't interfere while another flow already owns the player, or
+                // while we're mid resume-seek (pendingSeekMs auto-seek in flight).
+                if (s.isConnecting || s.isSwitchingSource || s.isSwitchingEpisode ||
+                    pendingSeekMs != null
+                ) continue
+
+                // A user-initiated pause must never trigger recovery.
+                if (!current.playWhenReady) {
+                    vodBufferingSinceMs = 0L
+                    vodHealthyStreakStartMs = 0L
+                    continue
+                }
+
+                val now = System.currentTimeMillis()
+                val state = current.playbackState
+                val pos = current.currentPosition
+
+                // ── Buffering-start bookkeeping ────────────────────────────
+                if (state == Player.STATE_BUFFERING) {
+                    if (vodBufferingSinceMs == 0L) vodBufferingSinceMs = now
+                } else {
+                    vodBufferingSinceMs = 0L
+                }
+
+                // ── Position progress + healthy-streak / retry reset ───────
+                if (state == Player.STATE_READY && current.isPlaying) {
+                    if (pos != vodLastPositionMs) {
+                        vodLastPositionMs = pos
+                        vodLastPositionAt = now
+                        vodLastHealthyAt = now
+                        if (vodHealthyStreakStartMs == 0L) vodHealthyStreakStartMs = now
+                        if (_uiState.value.isReconnecting) {
+                            _uiState.update { it.copy(isReconnecting = false, reconnectStatus = "") }
+                        }
+                        if (vodRecoveryAttempt > 0 &&
+                            (now - vodHealthyStreakStartMs) >= vodHealthyResetMs
+                        ) {
+                            Log.i(TAG, "VOD healthy streak — resetting retry counter (was $vodRecoveryAttempt)")
+                            vodRecoveryAttempt = 0
+                        }
+                    } else {
+                        vodHealthyStreakStartMs = 0L
+                    }
+                } else {
+                    vodHealthyStreakStartMs = 0L
+                }
+
+                // ── Detector 1: stuck buffering (torrents get a longer grace) ─
+                if (state == Player.STATE_BUFFERING && vodBufferingSinceMs > 0L) {
+                    val stallLimit = if (s.isMagnet) vodMagnetBufferingStallMs else vodBufferingStallMs
+                    val bufferedFor = now - vodBufferingSinceMs
+                    if (bufferedFor >= stallLimit) {
+                        Log.w(TAG, "VOD buffering stall (${bufferedFor}ms) — recovering")
+                        vodBufferingSinceMs = 0L
+                        recoverVodStream("buffering-stall")
+                        continue
+                    }
+                }
+
+                // ── Detector 2: READY + isPlaying but position frozen ──────
+                if (state == Player.STATE_READY && current.isPlaying && vodLastPositionMs >= 0L) {
+                    val frozenFor = now - vodLastPositionAt
+                    if (frozenFor >= vodFrozenPositionMs) {
+                        Log.w(TAG, "VOD position frozen ${frozenFor}ms at $pos — recovering")
+                        vodLastPositionAt = now
+                        recoverVodStream("position-frozen")
+                        continue
+                    }
+                }
+
+                // ── Detector 3: READY + playWhenReady but not playing ──────
+                if (state == Player.STATE_READY && !current.isPlaying) {
+                    val stalledFor = now - vodLastHealthyAt
+                    if (stalledFor >= vodFrozenPositionMs) {
+                        Log.w(TAG, "VOD ready+playWhenReady but not playing ${stalledFor}ms — recovering")
+                        vodLastHealthyAt = now
+                        recoverVodStream("ready-not-playing")
+                        continue
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Tiered VOD recovery — always resumes at the frozen position:
+     *   Attempt 1-2: re-prepare in place (cheapest; fixes transient chunk-loader
+     *                and renderer stalls; ExoPlayer keeps its position).
+     *   Attempt 3-4: full stop + fresh MediaItem, resuming via pendingSeekMs.
+     *   Exhausted:   streaming mode → fall back to the next source (position
+     *                preserved); otherwise surface a "try another source" error.
+     */
+    private fun recoverVodStream(reason: String) {
+        val exo = player ?: return
+        val s = _uiState.value
+        if (s.isIptv) return
+        val url = currentStreamUrl ?: return
+
+        val now = System.currentTimeMillis()
+        if (now - lastVodRecoveryAt < 2_000L) {
+            Log.i(TAG, "VOD recovery throttled (reason=$reason)")
+            return
+        }
+        lastVodRecoveryAt = now
+
+        val resumePos = exo.currentPosition.coerceAtLeast(0L)
+
+        if (vodRecoveryAttempt >= vodMaxRetries) {
+            stopVodWatchdog()
+            if (s.isStreamingMode && !s.isMagnet) {
+                Log.w(TAG, "VOD recovery exhausted — switching source (reason=$reason)")
+                if (resumePos > 5_000L) pendingSeekMs = resumePos
+                _uiState.update { it.copy(isReconnecting = false, reconnectStatus = "") }
+                tryNextSource("stalled")
+            } else {
+                Log.e(TAG, "VOD recovery exhausted (reason=$reason)")
+                _uiState.update {
+                    it.copy(
+                        isReconnecting = false,
+                        reconnectStatus = "",
+                        error = "Playback stalled. Please try another source."
+                    )
+                }
+            }
+            return
+        }
+
+        vodRecoveryAttempt += 1
+        val attempt = vodRecoveryAttempt
+        val backoffMs = when (attempt) {
+            1 -> 500L
+            2 -> 1_000L
+            3 -> 2_000L
+            else -> 3_000L
+        }
+
+        _uiState.update {
+            it.copy(isReconnecting = true, reconnectStatus = "Reconnecting… ($attempt/$vodMaxRetries)")
+        }
+        Log.w(TAG, "VOD recover #$attempt (reason=$reason, backoff=${backoffMs}ms, pos=$resumePos)")
+
+        viewModelScope.launch {
+            delay(backoffMs)
+            val cur = player ?: return@launch
+            if (cur !== exo) return@launch
+            if (_uiState.value.isIptv) return@launch
+
+            // Reset trackers before touching the player so a racing watchdog tick
+            // can't fire another recovery on stale data.
+            vodBufferingSinceMs = 0L
+            vodLastPositionMs = -1L
+            vodLastPositionAt = System.currentTimeMillis()
+            vodHealthyStreakStartMs = 0L
+
+            try {
+                if (attempt <= 2) {
+                    // Tier 1: re-prepare in place — position is retained by ExoPlayer.
+                    Log.i(TAG, "VOD recover tier 1: re-prepare in place")
+                    cur.prepare()
+                    cur.playWhenReady = true
+                } else {
+                    // Tier 2: full re-prepare with a fresh MediaItem, resume via seek.
+                    Log.i(TAG, "VOD recover tier 2: full re-prepare @ $resumePos")
+                    if (resumePos > 5_000L) pendingSeekMs = resumePos
+                    cur.stop()
+                    cur.clearMediaItems()
+                    cur.setMediaItem(MediaItem.fromUri(url))
+                    cur.prepare()
+                    cur.playWhenReady = true
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "VOD recover attempt $attempt threw: ${e.message}")
             }
         }
     }

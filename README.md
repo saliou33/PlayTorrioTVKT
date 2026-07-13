@@ -71,7 +71,7 @@ PlayTorrio TV finds movies and shows from a stack of online sources, plays them 
 
 ## Install
 
-1. Download the latest APK from [Releases](https://github.com/ayman708-UX/PlayTorrioTVKT/releases)
+1. Download the latest APK from [Releases](https://github.com/saliou33/PlayTorrioTVKT/releases)
 2. Pick the one that matches your device:
    - `app-arm64-v8a-release.apk` — most modern devices (recommended)
    - `app-armeabi-v7a-release.apk` — older / cheaper boxes
@@ -88,7 +88,7 @@ After the first install, the app updates itself.
 You need Android Studio (or just the command-line SDK) and a JDK 17+.
 
 ```bash
-git clone https://github.com/ayman708-UX/PlayTorrioTVKT.git
+git clone https://github.com/saliou33/PlayTorrioTVKT.git
 cd PlayTorrioTVKT
 ./gradlew assembleRelease
 ```
