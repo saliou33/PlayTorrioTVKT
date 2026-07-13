@@ -267,6 +267,9 @@ class MainActivity : ComponentActivity() {
                             autoPlayPositionMs = pos,
                         )
                     }
+                    composable("anime_discover") {
+                        com.playtorrio.tv.ui.screens.anime.AnimeDiscoverScreen(navController = navController)
+                    }
                     composable("anime_search") {
                         AnimeSearchScreen(navController = navController, vm = animeVm)
                     }

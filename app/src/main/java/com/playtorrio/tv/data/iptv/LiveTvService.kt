@@ -2,6 +2,9 @@ package com.playtorrio.tv.data.iptv
 
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import java.net.URL
 
@@ -63,6 +66,37 @@ object LiveTvService {
     private val extinfRe = Regex("""#EXTINF:-?\d+([^,]*),(.*)""")
     private val logoRe = Regex("""tvg-logo="([^"]*)"""")
     private val groupRe = Regex("""group-title="([^"]*)"""")
+
+    /** Quick liveness probe for a channel stream URL. Alive = a 2xx/3xx within
+     *  the timeout. Runs on IO. */
+    suspend fun isAlive(url: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val conn = (URL(url).openConnection() as java.net.HttpURLConnection).apply {
+                requestMethod = "GET"
+                setRequestProperty("User-Agent", "Mozilla/5.0")
+                setRequestProperty("Range", "bytes=0-1")
+                connectTimeout = 4_000; readTimeout = 4_000
+                instanceFollowRedirects = true
+            }
+            val code = conn.responseCode
+            conn.inputStream.use { runCatching { it.read() } }
+            conn.disconnect()
+            code in 200..399
+        } catch (_: Exception) { false }
+    }
+
+    /** Probe [channels] with bounded concurrency; returns the URLs found dead. */
+    suspend fun findDead(channels: List<Channel>, concurrency: Int = 12): Set<String> {
+        val dead = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+        channels.chunked(concurrency).forEach { batch ->
+            coroutineScope {
+                batch.map { ch ->
+                    async(Dispatchers.IO) { if (!isAlive(ch.url)) dead.add(ch.url) }
+                }.awaitAll()
+            }
+        }
+        return dead.toSet()
+    }
 
     suspend fun channels(categorySlug: String): List<Channel> = withContext(Dispatchers.IO) {
         cache[categorySlug]?.let { return@withContext it }

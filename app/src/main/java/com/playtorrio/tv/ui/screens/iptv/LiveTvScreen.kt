@@ -40,6 +40,7 @@ import com.playtorrio.tv.data.AppPreferences
 import com.playtorrio.tv.data.iptv.LiveTvService
 import com.playtorrio.tv.data.iptv.LiveTvService.Category
 import com.playtorrio.tv.data.iptv.LiveTvService.Channel
+import kotlinx.coroutines.launch
 
 private val Accent = Color(0xFF818CF8)
 private val Bg = Color(0xFF0B0B0F)
@@ -55,6 +56,10 @@ fun LiveTvScreen(navController: NavController) {
     var channels by remember { mutableStateOf<List<Channel>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var query by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
+    var aliveOnly by remember { mutableStateOf(AppPreferences.liveTvAliveOnly) }
+    var deadUrls by remember { mutableStateOf(AppPreferences.deadChannelUrls) }
+    var checking by remember { mutableStateOf(false) }
 
     LaunchedEffect(category) {
         loading = true
@@ -62,9 +67,24 @@ fun LiveTvScreen(navController: NavController) {
         loading = false
     }
 
-    val shown = remember(channels, query) {
-        if (query.isBlank()) channels
-        else channels.filter { it.name.contains(query.trim(), ignoreCase = true) }
+    val shown = remember(channels, query, aliveOnly, deadUrls) {
+        channels
+            .filter { !aliveOnly || it.url !in deadUrls }
+            .filter { query.isBlank() || it.name.contains(query.trim(), ignoreCase = true) }
+    }
+
+    fun checkAlive() {
+        if (checking || channels.isEmpty()) return
+        checking = true
+        scope.launch {
+            val dead = LiveTvService.findDead(channels)
+            val merged = deadUrls + dead
+            AppPreferences.deadChannelUrls = merged
+            deadUrls = merged
+            aliveOnly = true
+            AppPreferences.liveTvAliveOnly = true
+            checking = false
+        }
     }
 
     fun play(ch: Channel) {
@@ -122,7 +142,38 @@ fun LiveTvScreen(navController: NavController) {
                 )
             }
         }
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(10.dp))
+
+        // Alive-check controls
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            var t1 by remember { mutableStateOf(false) }
+            Text(
+                text = if (aliveOnly) "✓ Alive only" else "Alive only",
+                color = if (aliveOnly) Color(0xFF6EE7B7) else Color.White.copy(0.75f),
+                fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier.clip(RoundedCornerShape(999.dp))
+                    .background(if (aliveOnly) Color(0xFF6EE7B7).copy(0.15f) else Surface)
+                    .border(if (t1) 2.dp else 1.dp, if (t1) Accent else Color.White.copy(0.12f), RoundedCornerShape(999.dp))
+                    .onFocusChanged { t1 = it.isFocused }
+                    .clickable { aliveOnly = !aliveOnly; AppPreferences.liveTvAliveOnly = aliveOnly }
+                    .padding(horizontal = 14.dp, vertical = 6.dp)
+            )
+            var t2 by remember { mutableStateOf(false) }
+            Text(
+                text = if (checking) "Checking…" else "Check alive",
+                color = Accent, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier.clip(RoundedCornerShape(999.dp))
+                    .background(if (t2) Accent.copy(0.35f) else Accent.copy(0.15f))
+                    .border(if (t2) 2.dp else 1.dp, if (t2) Accent else Accent.copy(0.5f), RoundedCornerShape(999.dp))
+                    .onFocusChanged { t2 = it.isFocused }
+                    .clickable { checkAlive() }
+                    .padding(horizontal = 14.dp, vertical = 6.dp)
+            )
+            if (deadUrls.isNotEmpty()) {
+                Text("${deadUrls.size} hidden", color = Color.White.copy(0.4f), fontSize = 11.sp)
+            }
+        }
+        Spacer(Modifier.height(14.dp))
 
         when {
             loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Accent) }

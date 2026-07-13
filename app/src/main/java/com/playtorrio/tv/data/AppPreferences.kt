@@ -67,6 +67,16 @@ object AppPreferences {
         get() = prefs.getBoolean("show_adult_content", true)
         set(value) = prefs.edit().putBoolean("show_adult_content", value).apply()
 
+    /** Live TV: persist the "alive only" filter + the set of channel URLs found
+     *  dead by the alive-check, so the filter survives app restarts. */
+    var liveTvAliveOnly: Boolean
+        get() = prefs.getBoolean("livetv_alive_only", false)
+        set(value) = prefs.edit().putBoolean("livetv_alive_only", value).apply()
+
+    var deadChannelUrls: Set<String>
+        get() = prefs.getStringSet("livetv_dead_urls", emptySet()) ?: emptySet()
+        set(value) = prefs.edit().putStringSet("livetv_dead_urls", value).apply()
+
     var debridEnabled: Boolean
         get() = prefs.getBoolean(KEY_DEBRID_ENABLED, false)
         set(value) = prefs.edit().putBoolean(KEY_DEBRID_ENABLED, value).apply()

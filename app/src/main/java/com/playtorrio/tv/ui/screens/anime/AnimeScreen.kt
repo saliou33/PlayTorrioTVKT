@@ -144,6 +144,7 @@ fun AnimeScreen(
         // ── Top bar overlay ───────────────────────────────────────────────────
         AnimeTopBar(
             onSearch = { navController.navigate("anime_search") },
+            onDiscover = { navController.navigate("anime_discover") },
             onBack   = { navController.popBackStack() },
             onFocusDown = { runCatching { listFocusRequester.requestFocus() } },
         )
@@ -370,7 +371,7 @@ fun AnimeCard(
 // ── Top bar — each button is a TV-focusable Button ───────────────────────────
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun AnimeTopBar(onSearch: () -> Unit, onBack: () -> Unit, onFocusDown: () -> Unit = {}) {
+private fun AnimeTopBar(onSearch: () -> Unit, onDiscover: () -> Unit, onBack: () -> Unit, onFocusDown: () -> Unit = {}) {
     Row(
         Modifier.fillMaxWidth()
             .background(Brush.verticalGradient(listOf(BgDark.copy(0.95f), Color.Transparent)))
@@ -406,6 +407,20 @@ private fun AnimeTopBar(onSearch: () -> Unit, onBack: () -> Unit, onFocusDown: (
         }
         Spacer(Modifier.weight(1f))
 
+        Button(
+            onClick = onDiscover,
+            modifier = Modifier.size(40.dp),
+            colors = ButtonDefaults.colors(
+                containerColor = Color.White.copy(0.08f),
+                focusedContainerColor = Purple.copy(0.3f),
+                contentColor = Color.White, focusedContentColor = Color.White,
+            ),
+            shape = ButtonDefaults.shape(shape = CircleShape),
+            contentPadding = PaddingValues(0.dp),
+        ) {
+            Icon(Icons.Filled.Explore, null, modifier = Modifier.size(20.dp))
+        }
+        Spacer(Modifier.width(10.dp))
         Button(
             onClick = onSearch,
             modifier = Modifier.size(40.dp),
