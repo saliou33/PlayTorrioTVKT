@@ -308,12 +308,21 @@ object TorrServerService {
                 var largestIdx: Int? = null
                 var largestName: String? = null
                 var largestSize: Long = -1
+                // Largest file of ANY type — fallback when no recognized video
+                // extension is present (some torrents use odd/rare extensions).
+                var largestAnyIdx: Int? = null
+                var largestAnyName: String? = null
+                var largestAnySize: Long = -1
 
                 for (i in 0 until rawFiles.length()) {
                     val f = rawFiles.getJSONObject(i)
                     val name = f.optString("path", f.optString("name", ""))
                     val size = f.optLong("length", 0)
                     val id = f.optInt("id", i)
+
+                    if (size > largestAnySize) {
+                        largestAnySize = size; largestAnyIdx = id; largestAnyName = name
+                    }
 
                     if (!isVideoFile(name)) continue
 
@@ -345,6 +354,12 @@ object TorrServerService {
                 }
 
                 if (selectedIdx == null) { selectedIdx = largestIdx; selectedName = largestName; selectedSize = largestSize }
+                // Last resort: the biggest file overall (>50 MB) — almost always
+                // the video even when the extension isn't recognized. Prevents a
+                // spurious "No video file found" on oddly-packed torrents.
+                if (selectedIdx == null && largestAnyIdx != null && largestAnySize > 50_000_000L) {
+                    selectedIdx = largestAnyIdx; selectedName = largestAnyName; selectedSize = largestAnySize
+                }
 
                 if (selectedIdx != null && selectedName != null) {
                     // Set priority for selected file only
@@ -429,7 +444,10 @@ object TorrServerService {
         return lower.endsWith(".mkv") || lower.endsWith(".mp4") || lower.endsWith(".avi") ||
                 lower.endsWith(".mov") || lower.endsWith(".wmv") || lower.endsWith(".flv") ||
                 lower.endsWith(".webm") || lower.endsWith(".m4v") || lower.endsWith(".ts") ||
-                lower.endsWith(".m2ts") || lower.endsWith(".vob")
+                lower.endsWith(".m2ts") || lower.endsWith(".vob") || lower.endsWith(".mpg") ||
+                lower.endsWith(".mpeg") || lower.endsWith(".mts") || lower.endsWith(".m2v") ||
+                lower.endsWith(".divx") || lower.endsWith(".3gp") || lower.endsWith(".ogm") ||
+                lower.endsWith(".rmvb") || lower.endsWith(".asf")
     }
 
     private fun isEpisodeMatch(name: String, season: Int, episode: Int): Boolean {

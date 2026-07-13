@@ -140,6 +140,34 @@ object TorrentSearchService {
             .sortedByDescending { it.seeders }.take(60)
     }
 
+    // ── Poster matching (best-effort) ──────────────────────────────────────
+    // Torrent filenames are messy; we strip release tags to a rough title and
+    // ask TMDB for a poster. Cached per cleaned title. Returns null when there's
+    // no confident match (the row just shows its icon).
+    private val posterCache = HashMap<String, String?>()
+
+    private fun cleanTitle(raw: String): String {
+        var s = raw.replace('.', ' ').replace('_', ' ')
+        val cut = Regex(
+            """(?i)\b((19|20)\d{2}|2160p|1080p|720p|480p|x264|x265|h ?264|h ?265|hevc|web[- ]?dl|webrip|bluray|blu[- ]?ray|brrip|bdrip|hdrip|dvdrip|hdtv|s\d{1,2}e\d{1,2}|s\d{1,2}|season|complete|multi|dual)\b"""
+        ).find(s)
+        if (cut != null && cut.range.first > 0) s = s.substring(0, cut.range.first)
+        return s.replace(Regex("""[\[\](){}]"""), " ").replace(Regex("\\s+"), " ").trim()
+    }
+
+    suspend fun posterFor(name: String): String? = withContext(Dispatchers.IO) {
+        val title = cleanTitle(name)
+        if (title.length < 2) return@withContext null
+        synchronized(posterCache) { if (posterCache.containsKey(title)) return@withContext posterCache[title] }
+        val url = runCatching {
+            com.playtorrio.tv.data.api.TmdbClient.api
+                .searchMulti(title, com.playtorrio.tv.data.api.TmdbClient.API_KEY)
+                .results.firstOrNull { it.posterUrl != null }?.posterUrl
+        }.getOrNull()
+        synchronized(posterCache) { posterCache[title] = url }
+        url
+    }
+
     private fun fetch(url: String): String =
         URL(url).openConnection().apply {
             setRequestProperty("User-Agent", "Mozilla/5.0")

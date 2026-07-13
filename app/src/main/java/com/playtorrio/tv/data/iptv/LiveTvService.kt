@@ -98,14 +98,23 @@ object LiveTvService {
         return dead.toSet()
     }
 
-    suspend fun channels(categorySlug: String): List<Channel> = withContext(Dispatchers.IO) {
-        cache[categorySlug]?.let { return@withContext it }
+    /** Extra always-on public providers merged in as their own tabs. */
+    val EXTRA_SOURCES: List<Pair<String, String>> = listOf(
+        "Free-TV" to "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u8",
+        "IPTV-org (All)" to "https://iptv-org.github.io/iptv/index.m3u",
+    )
+
+    suspend fun channels(categorySlug: String): List<Channel> =
+        fetchM3u("cat:$categorySlug", "https://iptv-org.github.io/iptv/categories/$categorySlug.m3u")
+
+    /** Parse any M3U playlist URL into channels (cached by key). */
+    suspend fun fetchM3u(key: String, url: String): List<Channel> = withContext(Dispatchers.IO) {
+        cache[key]?.let { return@withContext it }
         val out = mutableListOf<Channel>()
         try {
-            val url = "https://iptv-org.github.io/iptv/categories/$categorySlug.m3u"
             val text = URL(url).openConnection().apply {
                 setRequestProperty("User-Agent", "Mozilla/5.0")
-                connectTimeout = 12_000; readTimeout = 20_000
+                connectTimeout = 12_000; readTimeout = 25_000
             }.getInputStream().bufferedReader().use { it.readText() }
 
             var pendingName: String? = null
@@ -121,16 +130,16 @@ object LiveTvService {
                     pendingGroup = groupRe.find(attrs)?.groupValues?.get(1)?.takeIf { it.isNotBlank() }
                 } else if (line.isNotEmpty() && !line.startsWith("#")) {
                     val name = pendingName
-                    if (name != null && (line.startsWith("http"))) {
+                    if (name != null && line.startsWith("http")) {
                         out.add(Channel(name, line, pendingLogo, pendingGroup))
                     }
                     pendingName = null; pendingLogo = null; pendingGroup = null
                 }
             }
-            cache[categorySlug] = out
-            Log.i(TAG, "Loaded ${out.size} channels for $categorySlug")
+            cache[key] = out
+            Log.i(TAG, "Loaded ${out.size} channels for $key")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to load $categorySlug: ${e.message}")
+            Log.e(TAG, "Failed to load $key: ${e.message}")
         }
         out
     }

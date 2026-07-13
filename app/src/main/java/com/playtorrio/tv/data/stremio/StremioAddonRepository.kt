@@ -52,37 +52,16 @@ object StremioAddonRepository {
             "https://anime-kitsu.strem.fun/manifest.json",
         ),
         RecommendedAddon(
-            "KnightCrawler",
-            "Community torrent aggregator (debrid-ready)",
-            "https://knightcrawler.elfhosted.com/manifest.json",
-        ),
-        RecommendedAddon(
             "OpenSubtitles v3",
             "Subtitles for almost everything, many languages",
             "https://opensubtitles-v3.strem.io/manifest.json",
-        ),
-        RecommendedAddon(
-            "Comet",
-            "Debrid-aware torrent/stream aggregator",
-            "https://comet.elfhosted.com/manifest.json",
-        ),
-        RecommendedAddon(
-            "USA TV",
-            "Live US TV channels catalog (browsable)",
-            "https://848b3516657c-usatv.baby-beamup.club/manifest.json",
         ),
     )
 
     /** Manifest URLs auto-installed on first run — a mix of browsable catalogs
      *  (Cinemeta, Anime Kitsu), torrent streams (Torrentio, KnightCrawler) and
      *  subtitles (OpenSubtitles) so everything works out of the box. */
-    private val DEFAULT_MANIFESTS = listOf(
-        "https://v3-cinemeta.strem.io/manifest.json",
-        "https://torrentio.strem.fun/manifest.json",
-        "https://anime-kitsu.strem.fun/manifest.json",
-        "https://knightcrawler.elfhosted.com/manifest.json",
-        "https://opensubtitles-v3.strem.io/manifest.json",
-    )
+    private val DEFAULT_MANIFESTS = RECOMMENDED_ADDONS.map { it.manifestUrl }
 
     fun isInstalled(manifestId: String): Boolean = getAddons().any { it.manifest.id == manifestId }
 

@@ -22,7 +22,10 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Whatshot
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.runtime.*
+import androidx.compose.ui.layout.ContentScale
+import coil.compose.AsyncImage
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -185,6 +188,10 @@ fun TorrentSearchScreen(navController: NavController) {
 private fun TorrentRow(result: TorrentResult, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     val quality = qualityOf(result.name)
+    // Lazily resolve a TMDB poster for this result (best-effort, cached).
+    val poster by produceState<String?>(null, result.name) {
+        value = runCatching { TorrentSearchService.posterFor(result.name) }.getOrNull()
+    }
     Row(
         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
             .background(if (focused) Color.White.copy(0.14f) else Surface)
@@ -193,6 +200,17 @@ private fun TorrentRow(result: TorrentResult, onClick: () -> Unit) {
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        Box(
+            Modifier.size(width = 44.dp, height = 62.dp).clip(RoundedCornerShape(6.dp)).background(Color.White.copy(0.08f)),
+            contentAlignment = Alignment.Center
+        ) {
+            if (poster != null) {
+                AsyncImage(model = poster, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            } else {
+                Icon(Icons.Filled.Movie, null, tint = Color.White.copy(0.3f), modifier = Modifier.size(20.dp))
+            }
+        }
+        Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(result.name, color = Color.White, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 18.sp)
             Spacer(Modifier.height(4.dp))

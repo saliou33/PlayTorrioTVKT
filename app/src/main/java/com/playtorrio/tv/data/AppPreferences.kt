@@ -77,6 +77,11 @@ object AppPreferences {
         get() = prefs.getStringSet("livetv_dead_urls", emptySet()) ?: emptySet()
         set(value) = prefs.edit().putStringSet("livetv_dead_urls", value).apply()
 
+    /** User-added Live TV M3U sources, stored as "name|url". */
+    var customLiveSources: Set<String>
+        get() = prefs.getStringSet("livetv_custom_sources", emptySet()) ?: emptySet()
+        set(value) = prefs.edit().putStringSet("livetv_custom_sources", value).apply()
+
     var debridEnabled: Boolean
         get() = prefs.getBoolean(KEY_DEBRID_ENABLED, false)
         set(value) = prefs.edit().putBoolean(KEY_DEBRID_ENABLED, value).apply()

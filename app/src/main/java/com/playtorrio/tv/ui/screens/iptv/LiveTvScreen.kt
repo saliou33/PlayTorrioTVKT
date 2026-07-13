@@ -12,6 +12,8 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -29,6 +31,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -38,7 +41,6 @@ import coil.compose.AsyncImage
 import com.playtorrio.tv.PlayerActivity
 import com.playtorrio.tv.data.AppPreferences
 import com.playtorrio.tv.data.iptv.LiveTvService
-import com.playtorrio.tv.data.iptv.LiveTvService.Category
 import com.playtorrio.tv.data.iptv.LiveTvService.Channel
 import kotlinx.coroutines.launch
 
@@ -46,24 +48,41 @@ private val Accent = Color(0xFF818CF8)
 private val Bg = Color(0xFF0B0B0F)
 private val Surface = Color.White.copy(alpha = 0.06f)
 
+/** A Live TV source tab: an iptv-org category (url == null) or an M3U URL. */
+private data class Tab(val label: String, val key: String, val url: String?, val adult: Boolean = false)
+
 @Composable
 fun LiveTvScreen(navController: NavController) {
     val context = LocalContext.current
-    val cats = remember {
-        LiveTvService.CATEGORIES.filter { !it.adult || AppPreferences.showAdultContent }
+    val scope = rememberCoroutineScope()
+
+    var customSources by remember { mutableStateOf(AppPreferences.customLiveSources) }
+    val tabs = remember(customSources) {
+        buildList {
+            LiveTvService.CATEGORIES
+                .filter { !it.adult || AppPreferences.showAdultContent }
+                .forEach { add(Tab(it.label, "cat:${it.slug}", null, it.adult)) }
+            LiveTvService.EXTRA_SOURCES.forEach { add(Tab(it.first, "extra:${it.first}", it.second)) }
+            customSources.forEach {
+                val parts = it.split("|", limit = 2)
+                if (parts.size == 2) add(Tab(parts[0], "custom:${parts[1]}", parts[1]))
+            }
+        }
     }
-    var category by remember { mutableStateOf(cats.first()) }
+
+    var tab by remember { mutableStateOf(tabs.first()) }
     var channels by remember { mutableStateOf<List<Channel>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var query by remember { mutableStateOf("") }
-    val scope = rememberCoroutineScope()
     var aliveOnly by remember { mutableStateOf(AppPreferences.liveTvAliveOnly) }
     var deadUrls by remember { mutableStateOf(AppPreferences.deadChannelUrls) }
     var checking by remember { mutableStateOf(false) }
+    var addUrl by remember { mutableStateOf("") }
 
-    LaunchedEffect(category) {
+    LaunchedEffect(tab) {
         loading = true
-        channels = LiveTvService.channels(category.slug)
+        channels = if (tab.url != null) LiveTvService.fetchM3u(tab.key, tab.url!!)
+        else LiveTvService.channels(tab.key.removePrefix("cat:"))
         loading = false
     }
 
@@ -77,23 +96,17 @@ fun LiveTvScreen(navController: NavController) {
         if (checking || channels.isEmpty()) return
         checking = true
         scope.launch {
-            val dead = LiveTvService.findDead(channels)
-            val merged = deadUrls + dead
-            AppPreferences.deadChannelUrls = merged
-            deadUrls = merged
-            aliveOnly = true
-            AppPreferences.liveTvAliveOnly = true
+            val merged = deadUrls + LiveTvService.findDead(channels)
+            AppPreferences.deadChannelUrls = merged; deadUrls = merged
+            aliveOnly = true; AppPreferences.liveTvAliveOnly = true
             checking = false
         }
     }
 
     fun play(ch: Channel) {
         context.startActivity(Intent(context, PlayerActivity::class.java).apply {
-            putExtra("streamUrl", ch.url)
-            putExtra("isIptv", true)
-            putExtra("isMovie", true)
-            putExtra("title", ch.name)
-            putExtra("tmdbId", -1)
+            putExtra("streamUrl", ch.url); putExtra("isIptv", true)
+            putExtra("isMovie", true); putExtra("title", ch.name); putExtra("tmdbId", -1)
         })
     }
 
@@ -103,7 +116,6 @@ fun LiveTvScreen(navController: NavController) {
             Spacer(Modifier.width(10.dp))
             Text("Live TV", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.width(16.dp))
-            // Inline channel search (filters the current category instantly).
             var boxFocused by remember { mutableStateOf(false) }
             Row(
                 modifier = Modifier.weight(1f).clip(RoundedCornerShape(999.dp)).background(Surface)
@@ -126,25 +138,24 @@ fun LiveTvScreen(navController: NavController) {
         Spacer(Modifier.height(14.dp))
 
         LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            items(cats) { cat ->
+            items(tabs) { t ->
                 var focused by remember { mutableStateOf(false) }
-                val selected = cat == category
+                val selected = t == tab
                 Text(
-                    text = cat.label,
+                    text = t.label,
                     color = if (selected || focused) Color.White else Color.White.copy(0.7f),
                     fontSize = 13.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                     modifier = Modifier.clip(RoundedCornerShape(999.dp))
                         .background(if (selected) Accent.copy(0.35f) else Surface)
                         .border(if (focused) 2.dp else 1.dp, if (focused) Accent else Color.White.copy(0.12f), RoundedCornerShape(999.dp))
                         .onFocusChanged { focused = it.isFocused }
-                        .clickable { category = cat }
+                        .clickable { tab = t }
                         .padding(horizontal = 14.dp, vertical = 6.dp)
                 )
             }
         }
         Spacer(Modifier.height(10.dp))
 
-        // Alive-check controls
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             var t1 by remember { mutableStateOf(false) }
             Text(
@@ -169,8 +180,34 @@ fun LiveTvScreen(navController: NavController) {
                     .clickable { checkAlive() }
                     .padding(horizontal = 14.dp, vertical = 6.dp)
             )
-            if (deadUrls.isNotEmpty()) {
-                Text("${deadUrls.size} hidden", color = Color.White.copy(0.4f), fontSize = 11.sp)
+            if (deadUrls.isNotEmpty()) Text("${deadUrls.size} hidden", color = Color.White.copy(0.4f), fontSize = 11.sp)
+        }
+        Spacer(Modifier.height(10.dp))
+
+        // Add a custom M3U source
+        var addFocused by remember { mutableStateOf(false) }
+        Row(
+            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(999.dp)).background(Surface)
+                .border(if (addFocused) 2.dp else 1.dp, if (addFocused) Accent else Color.White.copy(0.1f), RoundedCornerShape(999.dp))
+                .padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(Modifier.weight(1f)) {
+                BasicTextField(
+                    value = addUrl, onValueChange = { addUrl = it }, singleLine = true,
+                    textStyle = TextStyle(color = Color.White, fontSize = 13.sp), cursorBrush = SolidColor(Accent),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = {
+                        val u = addUrl.trim()
+                        if (u.startsWith("http")) {
+                            val name = runCatching { java.net.URI(u).host ?: "Custom" }.getOrDefault("Custom")
+                            val merged = customSources + "$name|$u"
+                            AppPreferences.customLiveSources = merged; customSources = merged; addUrl = ""
+                        }
+                    }),
+                    modifier = Modifier.fillMaxWidth().onFocusChanged { addFocused = it.isFocused }
+                )
+                if (addUrl.isEmpty()) Text("Add M3U playlist URL…", color = Color.White.copy(0.3f), fontSize = 13.sp)
             }
         }
         Spacer(Modifier.height(14.dp))
@@ -179,8 +216,7 @@ fun LiveTvScreen(navController: NavController) {
             loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Accent) }
             shown.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    if (channels.isEmpty()) "No channels in ${category.label}. Try another category."
-                    else "No channels match “$query”.",
+                    if (channels.isEmpty()) "No channels in ${tab.label}." else "No channels match “$query”.",
                     color = Color.White.copy(0.5f)
                 )
             }

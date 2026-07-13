@@ -145,6 +145,9 @@ fun AnimeScreen(
         AnimeTopBar(
             onSearch = { navController.navigate("anime_search") },
             onDiscover = { navController.navigate("anime_discover") },
+            onMature = if (com.playtorrio.tv.data.AppPreferences.showAdultContent) {
+                { navController.navigate("anime_discover?genre=Hentai") }
+            } else null,
             onBack   = { navController.popBackStack() },
             onFocusDown = { runCatching { listFocusRequester.requestFocus() } },
         )
@@ -371,7 +374,7 @@ fun AnimeCard(
 // ── Top bar — each button is a TV-focusable Button ───────────────────────────
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun AnimeTopBar(onSearch: () -> Unit, onDiscover: () -> Unit, onBack: () -> Unit, onFocusDown: () -> Unit = {}) {
+private fun AnimeTopBar(onSearch: () -> Unit, onDiscover: () -> Unit, onBack: () -> Unit, onMature: (() -> Unit)? = null, onFocusDown: () -> Unit = {}) {
     Row(
         Modifier.fillMaxWidth()
             .background(Brush.verticalGradient(listOf(BgDark.copy(0.95f), Color.Transparent)))
@@ -406,6 +409,21 @@ private fun AnimeTopBar(onSearch: () -> Unit, onDiscover: () -> Unit, onBack: ()
             Text("Hub", color = Purple, fontSize = 22.sp, fontWeight = FontWeight.Bold)
         }
         Spacer(Modifier.weight(1f))
+
+        if (onMature != null) {
+            var mFocused by remember { mutableStateOf(false) }
+            Text(
+                "18+",
+                color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(if (mFocused) Purple else Purple.copy(0.35f))
+                    .onFocusChanged { mFocused = it.isFocused }
+                    .clickable { onMature() }
+                    .padding(horizontal = 14.dp, vertical = 8.dp)
+            )
+            Spacer(Modifier.width(10.dp))
+        }
 
         Button(
             onClick = onDiscover,

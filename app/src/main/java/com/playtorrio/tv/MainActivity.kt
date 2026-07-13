@@ -267,8 +267,14 @@ class MainActivity : ComponentActivity() {
                             autoPlayPositionMs = pos,
                         )
                     }
-                    composable("anime_discover") {
-                        com.playtorrio.tv.ui.screens.anime.AnimeDiscoverScreen(navController = navController)
+                    composable(
+                        "anime_discover?genre={genre}",
+                        arguments = listOf(navArgument("genre") { type = NavType.StringType; nullable = true; defaultValue = null })
+                    ) { backStackEntry ->
+                        com.playtorrio.tv.ui.screens.anime.AnimeDiscoverScreen(
+                            navController = navController,
+                            initialGenre = backStackEntry.arguments?.getString("genre")
+                        )
                     }
                     composable("anime_search") {
                         AnimeSearchScreen(navController = navController, vm = animeVm)

@@ -106,7 +106,7 @@ fun AddonsScreen(navController: NavController) {
                                     val r = StremioAddonRepository.installAddon(u)
                                     refresh()
                                     Toast.makeText(context,
-                                        if (r.isSuccess) "Addon added" else "Failed: ${r.exceptionOrNull()?.message}",
+                                        if (r.isSuccess) "Addon added" else "Couldn't add — check the manifest URL",
                                         Toast.LENGTH_SHORT).show()
                                     if (r.isSuccess) urlInput = ""
                                 }
@@ -141,7 +141,7 @@ fun AddonsScreen(navController: NavController) {
                                 val r = StremioAddonRepository.installAddon(rec.manifestUrl)
                                 refresh()
                                 Toast.makeText(context,
-                                    if (r.isSuccess) "Added ${rec.name}" else "Failed: ${r.exceptionOrNull()?.message}",
+                                    if (r.isSuccess) "Added ${rec.name}" else "Couldn't add ${rec.name} — unavailable",
                                     Toast.LENGTH_SHORT).show()
                             }
                         }

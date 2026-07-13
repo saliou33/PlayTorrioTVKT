@@ -242,6 +242,7 @@ fun SettingsScreen(navController: NavController) {
                 }
             )
 
+            Spacer(Modifier.height(16.dp))
             var showAdult by remember { mutableStateOf(AppPreferences.showAdultContent) }
             SettingsToggleRow(
                 title = "Show 18+ content",

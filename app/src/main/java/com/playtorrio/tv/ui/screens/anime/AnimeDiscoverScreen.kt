@@ -43,12 +43,12 @@ private val SORTS = listOf(
 )
 
 @Composable
-fun AnimeDiscoverScreen(navController: NavController) {
+fun AnimeDiscoverScreen(navController: NavController, initialGenre: String? = null) {
     val scope = rememberCoroutineScope()
     val genres = remember {
         if (AppPreferences.showAdultContent) GENRES + "Hentai" else GENRES
     }
-    var genre by remember { mutableStateOf("All") }
+    var genre by remember { mutableStateOf(initialGenre?.takeIf { it in genres } ?: "All") }
     var sort by remember { mutableStateOf(SORTS.first()) }
     var results by remember { mutableStateOf<List<AnimeCardModel>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
