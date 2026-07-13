@@ -6,6 +6,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
@@ -69,6 +70,13 @@ private val SurfaceGlassBorder = Color.White.copy(alpha = 0.1f)
 fun SettingsScreen(navController: NavController) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+
+    // Manual "check for updates" state (in-app updater).
+    var upInfo by remember { mutableStateOf<com.playtorrio.tv.data.update.UpdateService.UpdateInfo?>(null) }
+    var upChecking by remember { mutableStateOf(false) }
+    var upBusy by remember { mutableStateOf(false) }
+    var upDl by remember { mutableStateOf(0L) }
+    var upTotal by remember { mutableStateOf(0L) }
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
 
@@ -253,6 +261,66 @@ fun SettingsScreen(navController: NavController) {
                     AppPreferences.showAdultContent = it
                 }
             )
+
+            Spacer(Modifier.height(16.dp))
+            // Manual update check → in-app updater.
+            var upRowFocused by remember { mutableStateOf(false) }
+            Row(
+                modifier = Modifier.fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(if (upRowFocused) Color.White.copy(0.12f) else Color.White.copy(0.05f))
+                    .border(
+                        if (upRowFocused) 2.dp else 1.dp,
+                        if (upRowFocused) Color(0xFF818CF8) else Color.White.copy(0.1f),
+                        RoundedCornerShape(12.dp)
+                    )
+                    .onFocusChanged { upRowFocused = it.isFocused }
+                    .clickable(enabled = !upChecking && !upBusy) {
+                        upChecking = true
+                        scope.launch {
+                            val info = com.playtorrio.tv.data.update.UpdateService.check()
+                            upChecking = false
+                            if (info != null) upInfo = info
+                            else android.widget.Toast.makeText(context, "You're on the latest version", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Check for updates", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Current version ${com.playtorrio.tv.BuildConfig.VERSION_NAME}",
+                        color = Color.White.copy(0.5f), fontSize = 12.sp
+                    )
+                }
+                if (upChecking) CircularProgressIndicator(color = Color(0xFF818CF8), modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+            }
+
+            val info = upInfo
+            if (info != null) {
+                com.playtorrio.tv.ui.components.UpdatePopup(
+                    versionName = info.versionName,
+                    releaseNotes = info.releaseNotes,
+                    isDownloading = upBusy,
+                    downloadedBytes = upDl,
+                    totalBytes = upTotal,
+                    onLater = { upInfo = null },
+                    onUpdateNow = {
+                        if (upBusy) return@UpdatePopup
+                        upBusy = true; upDl = 0L; upTotal = info.sizeBytes
+                        scope.launch {
+                            val apk = com.playtorrio.tv.data.update.UpdateService.download(context, info) { read, total ->
+                                upDl = read; if (total > 0) upTotal = total
+                            }
+                            if (apk != null) {
+                                if (com.playtorrio.tv.data.update.UpdateService.installApk(context, apk)) upInfo = null
+                            }
+                            upBusy = false
+                        }
+                    }
+                )
+            }
 
             // ── Source priority + extraction timeout ─────────────────────────
             Spacer(Modifier.height(20.dp))

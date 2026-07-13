@@ -98,10 +98,12 @@ object LiveTvService {
         return dead.toSet()
     }
 
-    /** Extra always-on public providers merged in as their own tabs. */
+    /** Extra always-on public providers merged in as their own tabs. The
+     *  "All Channels" playlist is grouped by category and spans ~14k channels
+     *  (NSFW excluded — that stays behind the gated XXX category). */
     val EXTRA_SOURCES: List<Pair<String, String>> = listOf(
+        "All Channels" to "https://iptv-org.github.io/iptv/index.category.m3u",
         "Free-TV" to "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u8",
-        "IPTV-org (All)" to "https://iptv-org.github.io/iptv/index.m3u",
     )
 
     suspend fun channels(categorySlug: String): List<Channel> =

@@ -81,8 +81,18 @@ fun LiveTvScreen(navController: NavController) {
 
     LaunchedEffect(tab) {
         loading = true
-        channels = if (tab.url != null) LiveTvService.fetchM3u(tab.key, tab.url!!)
-        else LiveTvService.channels(tab.key.removePrefix("cat:"))
+        channels = when {
+            // "All Channels" is category-grouped but excludes NSFW upstream, so
+            // append the XXX playlist when the 18+ setting is on.
+            tab.label == "All Channels" -> {
+                val base = LiveTvService.fetchM3u(tab.key, tab.url!!)
+                if (AppPreferences.showAdultContent)
+                    base + LiveTvService.fetchM3u("all-nsfw", "https://iptv-org.github.io/iptv/categories/xxx.m3u")
+                else base
+            }
+            tab.url != null -> LiveTvService.fetchM3u(tab.key, tab.url!!)
+            else -> LiveTvService.channels(tab.key.removePrefix("cat:"))
+        }
         loading = false
     }
 
