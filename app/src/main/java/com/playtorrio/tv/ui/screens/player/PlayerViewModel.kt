@@ -413,12 +413,19 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
             switchToSource(nextIdx)
         } else {
-            Log.w(TAG, "All sources exhausted after $reason")
+            // Never give up — the user exits deliberately. Clear the failed set
+            // and start the whole source list over after a short pause, keeping
+            // a "Reconnecting…" indicator up. Cancelled cleanly on player teardown.
+            Log.w(TAG, "All sources tried ($reason) — cycling from the top")
+            failedSourceIndices.clear()
             _uiState.update {
-                it.copy(
-                    isConnecting = false,
-                    error = "All sources failed: $reason"
-                )
+                it.copy(isConnecting = true, isReconnecting = true,
+                    reconnectStatus = "Reconnecting…", error = null)
+            }
+            streamRetryJob?.cancel()
+            streamRetryJob = viewModelScope.launch {
+                delay(4_000)
+                orderedSourceIndices.firstOrNull()?.let { switchToSource(it) }
             }
         }
     }
@@ -427,33 +434,38 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val url = currentStreamUrl ?: return
         if (streamRetryJob?.isActive == true) return
 
-        // In streaming mode, don't retry the same source — find another one.
-        // Preserve the playback position so the next source resumes where we
-        // failed instead of restarting from the beginning.
-        if (_uiState.value.isStreamingMode) {
-            val resumePos = exo.currentPosition.coerceAtLeast(0L)
-            if (resumePos > 5_000L) pendingSeekMs = resumePos
+        val resumePos = exo.currentPosition.coerceAtLeast(0L)
+        val midPlayback = resumePos > 10_000L
+        val streaming = _uiState.value.isStreamingMode
+
+        // At STARTUP in streaming mode the source produced nothing playable —
+        // switch to another source immediately. But once playback has begun,
+        // an error is almost always a transient network blip: ride it out by
+        // re-preparing the SAME source at the current position (below) instead
+        // of abandoning a working stream. Only after repeated failures do we
+        // fall back to another source.
+        if (streaming && !midPlayback) {
             tryNextSource(error.errorCodeName)
             return
         }
 
         if (startupRetryCount >= maxStartupRetries) {
-            _uiState.update {
-                it.copy(
-                    isConnecting = false,
-                    error = "Stream failed to start after retries: ${error.errorCodeName}"
-                )
+            if (streaming) {
+                if (resumePos > 5_000L) pendingSeekMs = resumePos
+                resetStartupRetryState()
+                tryNextSource(error.errorCodeName)
+                return
             }
-            return
+            // Torrent: never give up — the user exits deliberately. Reset the
+            // counter so we keep re-preparing the same stream at a steady pace.
+            Log.w(TAG, "Torrent retries exhausted — continuing to retry (no give-up)")
+            startupRetryCount = 0
         }
 
         val attempt = startupRetryCount + 1
         val delayMs = (attempt * 2_000L).coerceAtMost(8_000L)
         _uiState.update {
-            it.copy(
-                isConnecting = true,
-                connectionStatus = "Stream delayed, retrying ($attempt/$maxStartupRetries)…"
-            )
+            it.copy(isReconnecting = true, reconnectStatus = "Reconnecting…")
         }
 
         streamRetryJob = viewModelScope.launch {
@@ -461,18 +473,20 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             if (player !== exo) return@launch
 
             startupRetryCount = attempt
-            Log.w(TAG, "Retrying stream startup attempt $attempt due to ${error.errorCodeName}")
+            Log.w(TAG, "Re-preparing same stream (attempt $attempt) due to ${error.errorCodeName}")
 
-            // Preserve position for mid-playback errors so we resume instead of
-            // restarting from 0. (At true startup this is ~0 and is a no-op.)
-            val resumePos = exo.currentPosition.coerceAtLeast(0L)
+            // Preserve position so we resume where we stalled, not from 0.
             if (resumePos > 5_000L) pendingSeekMs = resumePos
 
-            exo.stop()
-            exo.clearMediaItems()
-            exo.setMediaItem(MediaItem.fromUri(url))
-            exo.prepare()
-            exo.playWhenReady = true
+            try {
+                exo.stop()
+                exo.clearMediaItems()
+                exo.setMediaItem(MediaItem.fromUri(url))
+                exo.prepare()
+                exo.playWhenReady = true
+            } catch (e: Exception) {
+                Log.w(TAG, "retry re-prepare failed: ${e.message}")
+            }
         }
     }
 
@@ -629,7 +643,20 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val renderersFactory = DefaultRenderersFactory(context)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
 
+        // Patient error policy: a slow torrent (peers dropped, cache draining)
+        // should keep retrying and re-buffer rather than error out and exit.
+        val torrentErrorPolicy = object : androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy() {
+            override fun getMinimumLoadableRetryCount(dataType: Int): Int = 12
+            override fun getRetryDelayMsFor(
+                loadErrorInfo: androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy.LoadErrorInfo
+            ): Long {
+                val attempt = loadErrorInfo.errorCount.coerceAtLeast(1)
+                if (attempt > 12) return androidx.media3.common.C.TIME_UNSET
+                return (1_500L * attempt).coerceAtMost(10_000L)
+            }
+        }
         val msFactory = DefaultMediaSourceFactory(context)
+            .setLoadErrorHandlingPolicy(torrentErrorPolicy)
         currentStreamUrl = streamUrl
         autoQualityAppliedForUrl = null
 
@@ -669,7 +696,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     _uiState.update {
                         it.copy(
                             duration = exo.duration.coerceAtLeast(0),
-                            isConnecting = false
+                            isConnecting = false,
+                            isReconnecting = false,
+                            reconnectStatus = ""
                         )
                     }
                     Log.d(TAG, "Player ready. Volume: ${exo.volume}, AudioFormat: ${exo.audioFormat}")
@@ -1591,15 +1620,19 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
 
-        // For anime, we want to fail quickly so the UI can fallback to the next embed.
+        // Anime fails fast (it has alternate embeds to fall back to); regular
+        // streaming is patient so a transient network slowdown re-buffers and
+        // keeps playing instead of dying and exiting the player.
+        val isAnime = _uiState.value.animeEmbeds != null
+        val maxLoadRetries = if (isAnime) 3 else 8
         val errorPolicy = object : androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy() {
-            override fun getMinimumLoadableRetryCount(dataType: Int): Int = 3
+            override fun getMinimumLoadableRetryCount(dataType: Int): Int = maxLoadRetries
             override fun getRetryDelayMsFor(
                 loadErrorInfo: androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy.LoadErrorInfo
             ): Long {
                 val attempt = loadErrorInfo.errorCount.coerceAtLeast(1)
-                if (attempt > 3) return androidx.media3.common.C.TIME_UNSET
-                return (1_000L * attempt).coerceAtMost(5_000L)
+                if (attempt > maxLoadRetries) return androidx.media3.common.C.TIME_UNSET
+                return (1_500L * attempt).coerceAtMost(8_000L)
             }
             override fun getFallbackSelectionFor(
                 fallbackOptions: androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy.FallbackOptions,
@@ -1684,7 +1717,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 if (state == Player.STATE_READY) {
                     resetStartupRetryState()
                     _uiState.update {
-                        it.copy(duration = exo.duration.coerceAtLeast(0), isConnecting = false)
+                        it.copy(
+                            duration = exo.duration.coerceAtLeast(0),
+                            isConnecting = false,
+                            isReconnecting = false,
+                            reconnectStatus = ""
+                        )
                     }
                     updateTracks()
                     autoSelectPendingSubtitle()
@@ -2292,23 +2330,20 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val resumePos = exo.currentPosition.coerceAtLeast(0L)
 
         if (vodRecoveryAttempt >= vodMaxRetries) {
-            stopVodWatchdog()
+            // Never terminal — keep going until the user exits deliberately.
+            vodRecoveryAttempt = 0
             if (s.isStreamingMode && !s.isMagnet) {
-                Log.w(TAG, "VOD recovery exhausted — switching source (reason=$reason)")
+                Log.w(TAG, "VOD recovery cycling — switching source (reason=$reason)")
                 if (resumePos > 5_000L) pendingSeekMs = resumePos
-                _uiState.update { it.copy(isReconnecting = false, reconnectStatus = "") }
-                tryNextSource("stalled")
-            } else {
-                Log.e(TAG, "VOD recovery exhausted (reason=$reason)")
+                lastVodRecoveryAt = now
                 _uiState.update {
-                    it.copy(
-                        isReconnecting = false,
-                        reconnectStatus = "",
-                        error = "Playback stalled. Please try another source."
-                    )
+                    it.copy(isReconnecting = true, reconnectStatus = "Reconnecting…", error = null)
                 }
+                tryNextSource("stalled")
+                return
             }
-            return
+            // Torrent: reset and keep recovering the same stream (fall through).
+            Log.w(TAG, "VOD recovery cycling — continuing torrent recovery (reason=$reason)")
         }
 
         vodRecoveryAttempt += 1
@@ -2462,16 +2497,24 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         switchToSource(nextIdx)
                     }
                 } else {
-                    Log.w(TAG, "All sources exhausted during extraction fallback")
+                    // Never give up — cycle the whole list again after a pause.
+                    Log.w(TAG, "All sources exhausted during extraction — cycling from the top")
+                    failedSourceIndices.clear()
                     withContext(Dispatchers.Main) {
                         _uiState.update {
                             it.copy(
                                 isSwitchingSource = false,
-                                isConnecting = false,
-                                error = "All sources failed to load"
+                                isConnecting = true,
+                                isReconnecting = true,
+                                reconnectStatus = "Reconnecting…",
+                                error = null
                             )
                         }
-                        showControls()
+                        streamRetryJob?.cancel()
+                        streamRetryJob = viewModelScope.launch {
+                            delay(4_000)
+                            orderedSourceIndices.firstOrNull()?.let { switchToSource(it) }
+                        }
                     }
                 }
             }

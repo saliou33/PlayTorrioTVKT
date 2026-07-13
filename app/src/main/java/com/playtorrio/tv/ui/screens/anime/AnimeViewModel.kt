@@ -22,6 +22,7 @@ class AnimeViewModel : ViewModel() {
 
     // ── Home screen state ─────────────────────────────────────────────────────
     val spotlight    = MutableStateFlow<List<AnimeCard>>(emptyList())
+    val top10        = MutableStateFlow<List<AnimeCard>>(emptyList())
     val trending     = MutableStateFlow<List<AnimeCard>>(emptyList())
     val topAiring    = MutableStateFlow<List<AnimeCard>>(emptyList())
     val mostPopular  = MutableStateFlow<List<AnimeCard>>(emptyList())
@@ -75,6 +76,7 @@ class AnimeViewModel : ViewModel() {
             homeError.value = null
             try {
                 val sp = async { runCatching { AnimeService.getSpotlight(10) }.getOrDefault(emptyList()) }
+                val t10 = async { runCatching { AnimeService.getTop10Today(10) }.getOrDefault(emptyList()) }
                 val tr = async { runCatching { AnimeService.getTrending(20) }.getOrDefault(emptyList()) }
                 val ta = async { runCatching { AnimeService.getTopAiring(20) }.getOrDefault(emptyList()) }
                 val mp = async { runCatching { AnimeService.getMostPopular(20) }.getOrDefault(emptyList()) }
@@ -82,6 +84,7 @@ class AnimeViewModel : ViewModel() {
                 val lc = async { runCatching { AnimeService.getLatestCompleted(20) }.getOrDefault(emptyList()) }
                 val re = async { runCatching { AnimeService.getRecentEpisodes(20) }.getOrDefault(emptyList()) }
                 spotlight.value   = sp.await()
+                top10.value       = t10.await()
                 trending.value    = tr.await()
                 topAiring.value   = ta.await()
                 mostPopular.value = mp.await()

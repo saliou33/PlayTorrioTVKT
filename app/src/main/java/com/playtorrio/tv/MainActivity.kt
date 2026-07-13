@@ -75,6 +75,11 @@ class MainActivity : ComponentActivity() {
         CoroutineScope(Dispatchers.IO).launch {
             TorrServerService.warmup(this@MainActivity)
         }
+        // Seed the default torrent addon (Torrentio) on first run so torrents
+        // work out of the box — surfaces as stream options on every title.
+        CoroutineScope(Dispatchers.IO).launch {
+            com.playtorrio.tv.data.stremio.StremioAddonRepository.seedDefaultsIfNeeded()
+        }
 
         setContent {
             PlayTorrioTheme {

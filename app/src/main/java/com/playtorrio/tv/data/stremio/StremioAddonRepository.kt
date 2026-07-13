@@ -20,7 +20,36 @@ object StremioAddonRepository {
 
     private const val PREFS_BASE = "stremio_prefs"
     private const val KEY_ADDONS = "installed_addons"
+    private const val KEY_DEFAULTS_SEEDED = "defaults_seeded_v1"
     private const val TAG = "StremioAddonRepo"
+
+    data class RecommendedAddon(
+        val name: String,
+        val description: String,
+        val manifestUrl: String,
+    )
+
+    /**
+     * Curated torrent/debrid aggregator addons. All work without configuration
+     * (public instances). Torrentio aggregates YTS, EZTV, 1337x, ThePirateBay,
+     * RARBG mirrors, TorrentGalaxy, MagnetDL, Nyaa (anime), etc., and honors
+     * Real-Debrid/TorBox. These surface as stream options on every TMDB title.
+     */
+    val RECOMMENDED_ADDONS = listOf(
+        RecommendedAddon(
+            "Torrentio",
+            "Torrents from YTS, EZTV, 1337x, TPB, RARBG, TorrentGalaxy, Nyaa… (debrid-ready)",
+            "https://torrentio.strem.fun/manifest.json",
+        ),
+        RecommendedAddon(
+            "KnightCrawler",
+            "Community torrent aggregator (debrid-ready)",
+            "https://knightcrawler.elfhosted.com/manifest.json",
+        ),
+    )
+
+    /** Manifest URLs auto-installed on first run so torrents work out of the box. */
+    private val DEFAULT_MANIFESTS = listOf(RECOMMENDED_ADDONS.first().manifestUrl)
 
     private lateinit var prefs: SharedPreferences
 
@@ -106,6 +135,36 @@ object StremioAddonRepository {
                 Result.failure(e)
             }
         }
+
+    // ── Defaults / recommended ─────────────────────────────────────────────────
+
+    /** Install any recommended addons not already present. Returns how many were
+     *  newly installed. Failures (dead manifest) are skipped silently. */
+    suspend fun installRecommended(): Int = withContext(Dispatchers.IO) {
+        var added = 0
+        val have = getAddons().map { it.manifest.id }.toMutableSet()
+        for (rec in RECOMMENDED_ADDONS) {
+            val result = installAddon(rec.manifestUrl)
+            result.getOrNull()?.let { if (have.add(it.manifest.id)) added++ }
+        }
+        added
+    }
+
+    /** One-time: seed the default torrent addon on first launch per profile so
+     *  torrents work without the user configuring anything. Safe to call every
+     *  launch — it no-ops after the first success and never throws. */
+    suspend fun seedDefaultsIfNeeded() = withContext(Dispatchers.IO) {
+        if (prefs.getBoolean(KEY_DEFAULTS_SEEDED, false)) return@withContext
+        try {
+            for (manifest in DEFAULT_MANIFESTS) {
+                runCatching { installAddon(manifest) }
+                    .onSuccess { if (it.isSuccess) Log.i(TAG, "Seeded default addon: $manifest") }
+            }
+            prefs.edit().putBoolean(KEY_DEFAULTS_SEEDED, true).apply()
+        } catch (e: Exception) {
+            Log.w(TAG, "seedDefaults failed: ${e.message}")
+        }
+    }
 
     // ── Remove ────────────────────────────────────────────────────────────────
 

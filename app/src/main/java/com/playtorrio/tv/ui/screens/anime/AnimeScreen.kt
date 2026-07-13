@@ -41,6 +41,7 @@ fun AnimeScreen(
     LaunchedEffect(Unit) { vm.init(context) }
 
     val spotlight   by vm.spotlight.collectAsState()
+    val top10       by vm.top10.collectAsState()
     val trending    by vm.trending.collectAsState()
     val topAiring   by vm.topAiring.collectAsState()
     val mostPopular by vm.mostPopular.collectAsState()
@@ -127,6 +128,7 @@ fun AnimeScreen(
                 }
             }
 
+            animeRow("Top 10 Today",      Icons.Filled.Whatshot,            top10,       navController)
             animeRow("Trending Now",      Icons.Filled.LocalFireDepartment, trending,    navController)
             animeRow("Top Airing",        Icons.Filled.Sensors,             topAiring,   navController)
             animeRow("Most Popular",      Icons.Filled.Star,                mostPopular, navController)
