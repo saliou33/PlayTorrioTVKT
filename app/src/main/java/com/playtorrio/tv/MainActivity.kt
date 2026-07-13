@@ -70,6 +70,8 @@ class MainActivity : ComponentActivity() {
         // Pre-start TorrServer + fetch trackers in background
         com.playtorrio.tv.data.profile.ProfileManager.init(this)
         AppPreferences.init(this)
+        // Persist source-diagnostics + capture crashes so /diag survives an app exit.
+        com.playtorrio.tv.data.streaming.StreamDiagnostics.init(this)
         CoroutineScope(Dispatchers.IO).launch {
             TorrServerService.warmup(this@MainActivity)
         }

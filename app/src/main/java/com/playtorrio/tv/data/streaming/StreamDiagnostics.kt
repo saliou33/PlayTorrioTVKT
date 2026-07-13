@@ -1,5 +1,7 @@
 package com.playtorrio.tv.data.streaming
 
+import android.content.Context
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -27,12 +29,50 @@ object StreamDiagnostics {
     )
 
     private const val MAX_SESSIONS = 15
+    private const val MAX_FILE_BYTES = 256 * 1024
     private val sessions = ArrayDeque<Session>()   // newest first
+
+    @Volatile private var logFile: File? = null
+    private val fileClock = SimpleDateFormat("MM-dd HH:mm:ss", Locale.US)
+
+    /**
+     * Persist logs to disk and capture uncaught crashes, so the /diag page still
+     * shows what happened after the app dies (in-memory state is lost on crash).
+     * Call once from MainActivity.onCreate.
+     */
+    fun init(context: Context) {
+        if (logFile != null) return
+        logFile = File(context.filesDir, "diag.log")
+        val prev = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, ex ->
+            runCatching {
+                val sw = java.io.StringWriter()
+                ex.printStackTrace(java.io.PrintWriter(sw))
+                appendFile("CRASH on ${thread.name}:\n$sw")
+            }
+            prev?.uncaughtException(thread, ex)
+        }
+        appendFile("── app start ──")
+    }
+
+    @Synchronized
+    private fun appendFile(line: String) {
+        val f = logFile ?: return
+        runCatching {
+            if (f.exists() && f.length() > MAX_FILE_BYTES) {
+                // Keep the newest half.
+                val keep = f.readText().takeLast(MAX_FILE_BYTES / 2)
+                f.writeText(keep)
+            }
+            f.appendText("[${fileClock.format(Date())}] $line\n")
+        }
+    }
 
     @Synchronized
     fun startSession(label: String) {
         sessions.addFirst(Session(System.currentTimeMillis(), label))
         while (sessions.size > MAX_SESSIONS) sessions.removeLast()
+        appendFile("PLAY: $label")
     }
 
     @Synchronized
@@ -40,11 +80,21 @@ object StreamDiagnostics {
         val s = sessions.firstOrNull() ?: Session(System.currentTimeMillis(), "(ad-hoc)").also {
             sessions.addFirst(it)
         }
-        s.attempts.add(Attempt(System.currentTimeMillis(), source, outcome, detail.take(160), durationMs))
+        val d = detail.take(160)
+        s.attempts.add(Attempt(System.currentTimeMillis(), source, outcome, d, durationMs))
+        appendFile("  $source → $outcome (${durationMs}ms)${if (d.isNotBlank()) " $d" else ""}")
     }
 
     @Synchronized
-    fun clear() = sessions.clear()
+    fun clear() {
+        sessions.clear()
+        runCatching { logFile?.writeText("") }
+    }
+
+    @Synchronized
+    private fun readPersistentLog(): String =
+        runCatching { logFile?.takeIf { it.exists() }?.readText()?.takeLast(48 * 1024) ?: "" }
+            .getOrDefault("")
 
     private val clock = SimpleDateFormat("HH:mm:ss", Locale.US)
 
@@ -107,6 +157,9 @@ object StreamDiagnostics {
 <h1>Source Diagnostics</h1>
 <p class="sub">Auto-refreshes every 3s • newest first • order shown = try order</p>
 $rows
+<h2 style="font-size:15px;margin:20px 0 6px;color:#9ca3af">Persistent log (survives crashes)</h2>
+<pre style="background:#111;border:1px solid #23232e;border-radius:10px;padding:12px;
+  white-space:pre-wrap;word-break:break-word;font-size:12px;color:#cbd5e1">${esc(readPersistentLog())}</pre>
 </body></html>
 """.trimIndent()
     }

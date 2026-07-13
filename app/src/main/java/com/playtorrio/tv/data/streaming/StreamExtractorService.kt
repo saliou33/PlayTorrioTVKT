@@ -382,6 +382,31 @@ object StreamExtractorService {
 
                     webViewClient = object : WebViewClient() {
 
+                        // Block navigations to non-http(s) schemes (intent://,
+                        // market://, deep links, etc.). The off-screen sniffer
+                        // WebView has no Activity task, so letting these through
+                        // either launches an external browser or crashes the app
+                        // with a startActivity-without-NEW_TASK exception. We only
+                        // need to observe network requests, never follow redirects.
+                        override fun shouldOverrideUrlLoading(
+                            view: WebView, request: WebResourceRequest
+                        ): Boolean = blockNonHttp(request.url.toString())
+
+                        @Deprecated("Kept for API 23")
+                        override fun shouldOverrideUrlLoading(view: WebView, url: String?): Boolean =
+                            blockNonHttp(url ?: "")
+
+                        private fun blockNonHttp(url: String): Boolean {
+                            val u = url.lowercase()
+                            val ok = u.startsWith("http://") || u.startsWith("https://") ||
+                                u.startsWith("about:")
+                            if (!ok) {
+                                Log.i(TAG, "[${source.name}] blocked external nav: $url")
+                                return true // consume — do not launch anything
+                            }
+                            return false
+                        }
+
                         override fun onRenderProcessGone(
                             view: WebView,
                             detail: RenderProcessGoneDetail
