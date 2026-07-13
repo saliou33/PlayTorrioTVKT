@@ -62,19 +62,9 @@ class HomeViewModel : ViewModel() {
     }
 
     fun refreshAddonRows() {
-        viewModelScope.launch {
-            try {
-                val addons = StremioAddonRepository.getAddons()
-                val boardRows = if (addons.isNotEmpty()) {
-                    StremioService.loadBoard(addons)
-                } else {
-                    emptyList()
-                }
-                _uiState.value = _uiState.value.copy(addonRows = boardRows)
-            } catch (_: Exception) {
-                _uiState.value = _uiState.value.copy(addonRows = emptyList())
-            }
-        }
+        // Addon catalog rows are intentionally NOT shown on Home — browse addon
+        // catalogs from the Addons page instead. Kept empty so Home stays clean.
+        _uiState.value = _uiState.value.copy(addonRows = emptyList())
     }
 
     /**

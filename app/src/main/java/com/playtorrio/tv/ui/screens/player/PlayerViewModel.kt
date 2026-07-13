@@ -1398,6 +1398,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             else -> return
         }
 
+        // Don't clutter Home's Continue Watching with transient plays that lack
+        // proper library metadata: addon-catalog streams, and torrent-hub magnets
+        // (tmdbId <= 0). Detail-screen torrents carry a real tmdbId and still resume.
+        if (kind == WatchKind.ADDON_STREAM) return
+        if (kind == WatchKind.MAGNET && s.tmdbId <= 0) return
+
         // For ADDON_STREAM with no tmdb, we still need stremio key parts.
         if (s.tmdbId <= 0 &&
             (kind == WatchKind.ADDON_STREAM &&

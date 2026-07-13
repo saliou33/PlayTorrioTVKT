@@ -220,16 +220,41 @@ fun StremioCatalogScreen(
 
                 if (extrasWithOptions.isNotEmpty()) {
                     Spacer(Modifier.height(12.dp))
+                    // Single horizontally-scrollable filter strip. A "genre" extra
+                    // can carry 20-30 options; a fixed Row would overflow the screen
+                    // edge and leave the tail chips unreachable, so we flatten every
+                    // extra's label + options into one scrolling, DPAD-navigable row.
                     LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        modifier = Modifier.fillMaxWidth().focusGroup()
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().focusGroup(),
+                        contentPadding = PaddingValues(vertical = 2.dp)
                     ) {
-                        items(extrasWithOptions) { extra ->
-                            ExtraFilterMenu(
-                                extra = extra,
-                                selectedValue = state.selectedExtras[extra.name],
-                                onSelect = { selected -> viewModel.setExtraFilter(extra.name, selected) }
-                            )
+                        extrasWithOptions.forEach { extra ->
+                            item(key = "lbl_${extra.name}") {
+                                Text(
+                                    text = extra.name.uppercase(),
+                                    color = Color.White.copy(alpha = 0.55f),
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 0.8.sp,
+                                    modifier = Modifier.padding(end = 2.dp)
+                                )
+                            }
+                            item(key = "${extra.name}_ALL") {
+                                FilterChip(
+                                    text = "ALL",
+                                    isSelected = state.selectedExtras[extra.name] == null,
+                                    onClick = { if (!extra.isRequired) viewModel.setExtraFilter(extra.name, null) }
+                                )
+                            }
+                            items(extra.options.orEmpty(), key = { "${extra.name}_$it" }) { option ->
+                                FilterChip(
+                                    text = option,
+                                    isSelected = state.selectedExtras[extra.name] == option,
+                                    onClick = { viewModel.setExtraFilter(extra.name, option) }
+                                )
+                            }
                         }
                     }
                 }
@@ -320,46 +345,6 @@ private fun CatalogMenuItem(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
         )
-    }
-}
-
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun ExtraFilterMenu(
-    extra: ExtraProperty,
-    selectedValue: String?,
-    onSelect: (String?) -> Unit
-) {
-    val options = extra.options.orEmpty()
-    Column(
-        modifier = Modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(SurfaceGlass)
-            .border(1.dp, SurfaceGlassBorder, RoundedCornerShape(10.dp))
-            .padding(horizontal = 8.dp, vertical = 8.dp)
-    ) {
-        Text(
-            text = extra.name.uppercase(),
-            color = Color.White.copy(alpha = 0.55f),
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 0.8.sp
-        )
-        Spacer(Modifier.height(6.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            FilterChip(
-                text = "ALL",
-                isSelected = selectedValue == null,
-                onClick = { if (!extra.isRequired) onSelect(null) }
-            )
-            options.forEach { option ->
-                FilterChip(
-                    text = option,
-                    isSelected = selectedValue == option,
-                    onClick = { onSelect(option) }
-                )
-            }
-        }
     }
 }
 
