@@ -133,9 +133,14 @@ fun TorrentSearchScreen(navController: NavController) {
 
         Spacer(Modifier.height(12.dp))
 
-        // Category chips
+        // Category chips (mature category hidden unless enabled in Settings)
+        val cats = remember {
+            TorrentCategory.entries.filter {
+                !it.adult || com.playtorrio.tv.data.AppPreferences.showAdultContent
+            }
+        }
         LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            items(TorrentCategory.entries.toList()) { cat ->
+            items(cats) { cat ->
                 var chipFocused by remember { mutableStateOf(false) }
                 val selected = cat == category
                 Text(
@@ -145,7 +150,7 @@ fun TorrentSearchScreen(navController: NavController) {
                     modifier = Modifier.clip(RoundedCornerShape(999.dp))
                         .background(if (selected) Accent.copy(0.35f) else Surface)
                         .border(if (chipFocused) 2.dp else 1.dp, if (chipFocused) Accent else Color.White.copy(0.12f), RoundedCornerShape(999.dp))
-                        .onFocusChanged { chipFocused = it.isFocused }.focusable()
+                        .onFocusChanged { chipFocused = it.isFocused }
                         .clickable { category = cat }
                         .padding(horizontal = 14.dp, vertical = 6.dp)
                 )
@@ -184,7 +189,7 @@ private fun TorrentRow(result: TorrentResult, onClick: () -> Unit) {
         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
             .background(if (focused) Color.White.copy(0.14f) else Surface)
             .border(if (focused) 2.dp else 0.dp, if (focused) Accent else Color.Transparent, RoundedCornerShape(10.dp))
-            .onFocusChanged { focused = it.isFocused }.focusable().clickable { onClick() }
+            .onFocusChanged { focused = it.isFocused }.clickable { onClick() }
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

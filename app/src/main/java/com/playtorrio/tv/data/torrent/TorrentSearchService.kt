@@ -93,19 +93,24 @@ object TorrentSearchService {
     }
 
     // Torrent categories for the hub. apibayCat = ThePirateBay category code
-    // (0 = all). Anime is served best by Nyaa. topQuery hits apibay's top-100.
-    enum class TorrentCategory(val label: String, val apibayCat: String, val topQuery: String, val nyaaOnly: Boolean = false) {
-        ALL("All", "0", "top100:all"),
-        MOVIES("Movies", "201", "top100:201"),
-        HD_MOVIES("4K/HD Movies", "207", "top100:207"),
-        TV("Series", "205", "top100:205"),
-        HD_TV("4K/HD Series", "208", "top100:208"),
-        ANIME("Anime", "0", "top100:all", nyaaOnly = true),
-        MUSIC("Music", "100", "top100:100"),
-        GAMES("Games", "400", "top100:400"),
-        SOFTWARE("Software", "300", "top100:300"),
-        BOOKS("Books", "601", "top100:601"),
-        XXX("XXX", "500", "top100:500"),
+    // (0 = all). topCode = parent code for apibay's precompiled top-100 file
+    // (reliable). Anime is served best by Nyaa. adult ones are gated by the
+    // 18+ content setting.
+    enum class TorrentCategory(
+        val label: String, val apibayCat: String, val topCode: String,
+        val nyaaOnly: Boolean = false, val adult: Boolean = false,
+    ) {
+        ALL("All", "0", "all"),
+        MOVIES("Movies", "201", "200"),
+        HD_MOVIES("4K/HD Movies", "207", "200"),
+        TV("Series", "205", "200"),
+        HD_TV("4K/HD Series", "208", "200"),
+        ANIME("Anime", "0", "all", nyaaOnly = true),
+        MUSIC("Music", "100", "100"),
+        GAMES("Games", "400", "400"),
+        SOFTWARE("Software", "300", "300"),
+        BOOKS("Books", "601", "600"),
+        XXX("XXX", "500", "500", adult = true),
     }
 
     /** Category-aware search for the hub. */
@@ -123,49 +128,55 @@ object TorrentSearchService {
         deduplicateResults(uindex.await() + knaben.await() + tpb.await()).sortedByDescending { it.seeders }
     }
 
-    /** Popular torrents for the landing page (per category). */
+    /** Popular torrents for the landing page (per category). Uses apibay's
+     *  precompiled top-100 file (reliable) or Nyaa for anime. */
     suspend fun popular(cat: TorrentCategory): List<TorrentResult> = withContext(Dispatchers.IO) {
         if (cat.nyaaOnly) {
-            // Nyaa has no top-100; show the newest highly-seeded anime instead.
             return@withContext runCatching { searchNyaa("1080p") }.getOrDefault(emptyList())
-                .sortedByDescending { it.seeders }.take(50)
+                .sortedByDescending { it.seeders }.take(60)
         }
-        runCatching { searchApibay(cat.topQuery, cat.apibayCat) }.getOrDefault(emptyList())
-            .sortedByDescending { it.seeders }.take(50)
+        val url = "https://apibay.org/precompiled/data_top100_${cat.topCode}.json"
+        runCatching { parseApibay(fetch(url)) }.getOrDefault(emptyList())
+            .sortedByDescending { it.seeders }.take(60)
+    }
+
+    private fun fetch(url: String): String =
+        URL(url).openConnection().apply {
+            setRequestProperty("User-Agent", "Mozilla/5.0")
+            connectTimeout = 10_000; readTimeout = 12_000
+        }.getInputStream().bufferedReader().use { it.readText() }
+
+    private fun parseApibay(body: String): List<TorrentResult> {
+        val out = mutableListOf<TorrentResult>()
+        val arr = org.json.JSONArray(body)
+        for (i in 0 until arr.length()) {
+            val o = arr.getJSONObject(i)
+            val hash = o.optString("info_hash")
+            // apibay returns a single sentinel row when there are no matches.
+            if (hash.isBlank() || hash.all { it == '0' }) continue
+            val name = o.optString("name")
+            if (name.isBlank()) continue
+            out.add(
+                TorrentResult(
+                    name = name,
+                    magnetLink = magnetFromHash(hash, name),
+                    size = humanSize(o.optString("size").toLongOrNull() ?: 0L),
+                    seeders = o.optString("seeders").toIntOrNull() ?: 0,
+                    leechers = o.optString("leechers").toIntOrNull() ?: 0,
+                    source = "ThePirateBay",
+                )
+            )
+        }
+        return out
     }
 
     /** ThePirateBay via the apibay JSON API — reliable (no HTML scraping). */
     private suspend fun searchApibay(query: String, cat: String = "0"): List<TorrentResult> = withContext(Dispatchers.IO) {
-        val out = mutableListOf<TorrentResult>()
         try {
-            val url = "https://apibay.org/q.php?q=${URLEncoder.encode(query, "UTF-8")}&cat=$cat"
-            val body = URL(url).openConnection().apply {
-                setRequestProperty("User-Agent", "Mozilla/5.0")
-                connectTimeout = 10_000; readTimeout = 12_000
-            }.getInputStream().bufferedReader().use { it.readText() }
-            val arr = org.json.JSONArray(body)
-            for (i in 0 until arr.length()) {
-                val o = arr.getJSONObject(i)
-                val hash = o.optString("info_hash")
-                // apibay returns a single sentinel row when there are no matches.
-                if (hash.isBlank() || hash.all { it == '0' }) continue
-                val name = o.optString("name")
-                if (name.isBlank()) continue
-                out.add(
-                    TorrentResult(
-                        name = name,
-                        magnetLink = magnetFromHash(hash, name),
-                        size = humanSize(o.optString("size").toLongOrNull() ?: 0L),
-                        seeders = o.optString("seeders").toIntOrNull() ?: 0,
-                        leechers = o.optString("leechers").toIntOrNull() ?: 0,
-                        source = "ThePirateBay",
-                    )
-                )
-            }
+            parseApibay(fetch("https://apibay.org/q.php?q=${URLEncoder.encode(query, "UTF-8")}&cat=$cat"))
         } catch (e: Exception) {
-            Log.e(TAG, "apibay search failed: $query", e)
+            Log.e(TAG, "apibay search failed: $query", e); emptyList()
         }
-        out
     }
 
     suspend fun search(request: TorrentSearchRequest): List<TorrentResult> = coroutineScope {

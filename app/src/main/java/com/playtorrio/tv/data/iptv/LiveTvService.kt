@@ -23,29 +23,39 @@ object LiveTvService {
         val group: String?,
     )
 
-    /** iptv-org category slugs offered in the UI (label → slug). */
-    val CATEGORIES: List<Pair<String, String>> = listOf(
-        "Sports" to "sports",
-        "News" to "news",
-        "Movies" to "movies",
-        "Series" to "series",
-        "Music" to "music",
-        "Entertainment" to "entertainment",
-        "Documentary" to "documentary",
-        "Kids" to "kids",
-        "Comedy" to "comedy",
-        "General" to "general",
-        "Science" to "science",
-        "Lifestyle" to "lifestyle",
-        "Family" to "family",
-        "Culture" to "culture",
-        "Animation" to "animation",
-        "Cooking" to "cooking",
-        "Travel" to "travel",
-        "Religious" to "religious",
-        "Education" to "education",
-        "Business" to "business",
-        "Weather" to "weather",
+    data class Category(val label: String, val slug: String, val adult: Boolean = false)
+
+    /** Every iptv-org category, no exceptions. `adult` ones are hidden unless
+     *  the 18+ content setting is enabled. */
+    val CATEGORIES: List<Category> = listOf(
+        Category("Sports", "sports"),
+        Category("News", "news"),
+        Category("Movies", "movies"),
+        Category("Series", "series"),
+        Category("Music", "music"),
+        Category("Entertainment", "entertainment"),
+        Category("Documentary", "documentary"),
+        Category("Kids", "kids"),
+        Category("Comedy", "comedy"),
+        Category("General", "general"),
+        Category("Animation", "animation"),
+        Category("Family", "family"),
+        Category("Culture", "culture"),
+        Category("Science", "science"),
+        Category("Lifestyle", "lifestyle"),
+        Category("Cooking", "cooking"),
+        Category("Travel", "travel"),
+        Category("Outdoor", "outdoor"),
+        Category("Relax", "relax"),
+        Category("Classic", "classic"),
+        Category("Auto", "auto"),
+        Category("Business", "business"),
+        Category("Shop", "shop"),
+        Category("Religious", "religious"),
+        Category("Education", "education"),
+        Category("Legislative", "legislative"),
+        Category("Weather", "weather"),
+        Category("XXX", "xxx", adult = true),
     )
 
     private val cache = mutableMapOf<String, List<Channel>>()

@@ -86,7 +86,7 @@ class AnimeViewModel : ViewModel() {
                 val lc = async { runCatching { AnimeService.getLatestCompleted(20) }.getOrDefault(emptyList()) }
                 val re = async { runCatching { AnimeService.getRecentEpisodes(20) }.getOrDefault(emptyList()) }
                 val he = async {
-                    if (com.playtorrio.tv.data.AppPreferences.showAdultAnime)
+                    if (com.playtorrio.tv.data.AppPreferences.showAdultContent)
                         runCatching { AnimeService.browse(genre = "Hentai", sort = "POPULARITY_DESC", perPage = 20) }.getOrDefault(emptyList())
                     else emptyList()
                 }

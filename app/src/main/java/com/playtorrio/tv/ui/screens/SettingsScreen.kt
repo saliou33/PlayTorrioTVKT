@@ -242,6 +242,17 @@ fun SettingsScreen(navController: NavController) {
                 }
             )
 
+            var showAdult by remember { mutableStateOf(AppPreferences.showAdultContent) }
+            SettingsToggleRow(
+                title = "Show 18+ content",
+                description = "Show mature categories in Anime, Live TV and Torrent search",
+                checked = showAdult,
+                onCheckedChange = {
+                    showAdult = it
+                    AppPreferences.showAdultContent = it
+                }
+            )
+
             // ── Source priority + extraction timeout ─────────────────────────
             Spacer(Modifier.height(20.dp))
 

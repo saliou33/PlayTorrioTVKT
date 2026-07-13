@@ -61,10 +61,11 @@ object AppPreferences {
         get() = prefs.getBoolean(KEY_STREAMING_MODE, true)
         set(value) = prefs.edit().putBoolean(KEY_STREAMING_MODE, value).apply()
 
-    /** Show the 18+ (Hentai) anime row/section. */
-    var showAdultAnime: Boolean
-        get() = prefs.getBoolean("show_adult_anime", true)
-        set(value) = prefs.edit().putBoolean("show_adult_anime", value).apply()
+    /** Master 18+ content toggle. Gates the mature anime row/page, the mature
+     *  Live TV category, and the mature torrent category. Default on. */
+    var showAdultContent: Boolean
+        get() = prefs.getBoolean("show_adult_content", true)
+        set(value) = prefs.edit().putBoolean("show_adult_content", value).apply()
 
     var debridEnabled: Boolean
         get() = prefs.getBoolean(KEY_DEBRID_ENABLED, false)

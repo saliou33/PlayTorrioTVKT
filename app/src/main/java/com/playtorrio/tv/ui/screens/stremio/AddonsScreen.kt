@@ -136,7 +136,6 @@ fun AddonsScreen(navController: NavController) {
                         .background(if (focused) Color.White.copy(0.12f) else Surface)
                         .border(if (focused) 2.dp else 1.dp, if (focused) Accent else Color.White.copy(0.1f), RoundedCornerShape(12.dp))
                         .onFocusChanged { focused = it.isFocused }
-                        .focusable()
                         .clickable {
                             scope.launch {
                                 val r = StremioAddonRepository.installAddon(rec.manifestUrl)
@@ -218,7 +217,6 @@ private fun AddonSection(
                             .background(if (focused) Color.White.copy(0.15f) else Surface)
                             .border(if (focused) 2.dp else 1.dp, if (focused) Accent else Color.White.copy(0.1f), RoundedCornerShape(10.dp))
                             .onFocusChanged { focused = it.isFocused }
-                            .focusable()
                             .clickable { onCatalog(cat.type, cat.id, "${addon.manifest.name} · ${cat.name.ifBlank { cat.id }}") }
                             .padding(horizontal = 16.dp, vertical = 12.dp)
                     ) {
@@ -241,7 +239,6 @@ private fun PillButton(text: String, icon: androidx.compose.ui.graphics.vector.I
             .background(if (focused) accent.copy(0.35f) else accent.copy(0.15f))
             .border(if (focused) 2.dp else 1.dp, if (focused) accent else accent.copy(0.5f), RoundedCornerShape(10.dp))
             .onFocusChanged { focused = it.isFocused }
-            .focusable()
             .clickable(enabled = enabled) { onClick() }
             .padding(horizontal = 14.dp, vertical = 10.dp)
     ) {
