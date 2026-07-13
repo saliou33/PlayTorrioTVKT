@@ -62,9 +62,9 @@ object AppPreferences {
         set(value) = prefs.edit().putBoolean(KEY_STREAMING_MODE, value).apply()
 
     /** Master 18+ content toggle. Gates the mature anime row/page, the mature
-     *  Live TV category, and the mature torrent category. Default on. */
+     *  Live TV category, and the mature torrent category. Off by default. */
     var showAdultContent: Boolean
-        get() = prefs.getBoolean("show_adult_content", true)
+        get() = prefs.getBoolean("show_adult_content", false)
         set(value) = prefs.edit().putBoolean("show_adult_content", value).apply()
 
     /** Live TV: persist the "alive only" filter + the set of channel URLs found

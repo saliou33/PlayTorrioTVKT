@@ -38,6 +38,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.Icon
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -85,6 +89,11 @@ fun StremioCatalogScreen(
     }
 
     val selectedCatalog = state.catalogs.getOrNull(state.selectedCatalogIndex)
+    var catQuery by remember { mutableStateOf("") }
+    val shownItems = remember(state.items, catQuery) {
+        if (catQuery.isBlank()) state.items
+        else state.items.filter { it.name.contains(catQuery.trim(), ignoreCase = true) }
+    }
 
     Box(
         modifier = Modifier
@@ -172,6 +181,37 @@ fun StremioCatalogScreen(
                     )
                 }
 
+                // Search within the loaded catalog items.
+                Spacer(Modifier.height(10.dp))
+                var sFocused by remember { mutableStateOf(false) }
+                Row(
+                    modifier = Modifier.fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color.White.copy(alpha = 0.06f))
+                        .border(
+                            if (sFocused) 2.dp else 1.dp,
+                            if (sFocused) Color(0xFF818CF8) else Color.White.copy(alpha = 0.12f),
+                            RoundedCornerShape(10.dp)
+                        )
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Filled.Search, null,
+                        tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Box(Modifier.weight(1f)) {
+                        androidx.compose.foundation.text.BasicTextField(
+                            value = catQuery, onValueChange = { catQuery = it }, singleLine = true,
+                            textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 14.sp),
+                            cursorBrush = androidx.compose.ui.graphics.SolidColor(Color(0xFF818CF8)),
+                            modifier = Modifier.fillMaxWidth().onFocusChanged { sFocused = it.isFocused }
+                        )
+                        if (catQuery.isEmpty()) Text("Search in this catalog…", color = Color.White.copy(alpha = 0.3f), fontSize = 14.sp)
+                    }
+                }
+
                 // Extra filters menu (genre/options/etc.)
                 val extrasWithOptions = selectedCatalog
                     ?.extra
@@ -209,11 +249,13 @@ fun StremioCatalogScreen(
                         columns = GridCells.Fixed(4),
                         state = gridState,
                         modifier = Modifier.fillMaxSize().focusGroup(),
-                        contentPadding = PaddingValues(vertical = 8.dp),
+                        // Generous bottom padding so the last rows aren't cropped
+                        // by the screen edge / "Loading more" bar.
+                        contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        itemsIndexed(state.items, key = { idx, item -> "${item.id}_$idx" }) { index, item ->
+                        itemsIndexed(shownItems, key = { idx, item -> "${item.id}_$idx" }) { index, item ->
                             CatalogItemCard(item = item) {
                                 val resolvedType = item.type.trim()
                                     .ifBlank { selectedCatalog?.type.orEmpty() }

@@ -212,13 +212,18 @@ fun ReaderScreen(navController: NavController) {
                 modifier = Modifier.fillMaxSize()
             ) {
                 items(state.pageUrls) { pageUrl ->
-                    AsyncImage(
-                        model = ImageRequest.Builder(ctx).data(pageUrl).crossfade(true).build(),
-                        imageLoader = ComicImageLoader.get(ctx),
-                        contentDescription = null,
-                        contentScale = ContentScale.FillWidth,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    // Center each page in a readable column (~45% of a wide TV
+                    // screen) so a portrait page roughly fits the height instead
+                    // of filling the full width and looking massively zoomed in.
+                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+                        AsyncImage(
+                            model = ImageRequest.Builder(ctx).data(pageUrl).crossfade(true).build(),
+                            imageLoader = ComicImageLoader.get(ctx),
+                            contentDescription = null,
+                            contentScale = ContentScale.FillWidth,
+                            modifier = Modifier.fillMaxWidth(0.45f)
+                        )
+                    }
                 }
             }
         } else {

@@ -58,7 +58,7 @@ object LiveTvService {
         Category("Education", "education"),
         Category("Legislative", "legislative"),
         Category("Weather", "weather"),
-        Category("XXX", "xxx", adult = true),
+        // Note: iptv-org keeps the "xxx" category empty by policy, so it's omitted.
     )
 
     private val cache = mutableMapOf<String, List<Channel>>()
