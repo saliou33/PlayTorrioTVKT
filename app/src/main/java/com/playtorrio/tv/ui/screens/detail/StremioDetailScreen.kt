@@ -358,34 +358,42 @@ private fun StremioDetailContent(
                         }
                     }
                 } else {
-                    // Series: season selector + episode list
                     val videos = meta.videos ?: emptyList()
                     val seasons = videos.mapNotNull { it.season }.filter { it > 0 }.distinct().sorted()
 
-                    if (seasons.isNotEmpty()) {
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(seasons) { season ->
-                                SeasonChip(
-                                    season = season,
-                                    isSelected = season == selectedSeason,
-                                    onClick = { onSeasonSelected(season) }
-                                )
+                    if (videos.isEmpty()) {
+                        // Live channel / single stream — IPTV & live-TV addons (e.g.
+                        // ones from stremio-addons.net) expose type="tv"/"channel" with
+                        // no episode list, so give them a direct Watch button that plays
+                        // the channel's own stream.
+                        WatchButton(onClick = onPlayMovie)
+                    } else {
+                        // Series: season selector + episode list
+                        if (seasons.isNotEmpty()) {
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                items(seasons) { season ->
+                                    SeasonChip(
+                                        season = season,
+                                        isSelected = season == selectedSeason,
+                                        onClick = { onSeasonSelected(season) }
+                                    )
+                                }
                             }
                         }
-                    }
 
-                    Spacer(Modifier.height(4.dp))
+                        Spacer(Modifier.height(4.dp))
 
-                    val episodesForSeason = videos.filter {
-                        it.season == selectedSeason || (seasons.isEmpty())
-                    }
+                        val episodesForSeason = videos.filter {
+                            it.season == selectedSeason || (seasons.isEmpty())
+                        }
 
-                    LazyColumn(
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        itemsIndexed(episodesForSeason) { _, video ->
-                            EpisodeRow(video = video, onClick = { onEpisodeSelected(video) })
+                        LazyColumn(
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            itemsIndexed(episodesForSeason) { _, video ->
+                                EpisodeRow(video = video, onClick = { onEpisodeSelected(video) })
+                            }
                         }
                     }
                 }
