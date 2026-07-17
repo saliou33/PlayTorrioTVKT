@@ -821,8 +821,9 @@ private fun PlayerControlsOverlay(
                         )
                     }
 
-                    // Suggestions slideshow ("more like this"), when we have a TMDB id
-                    if (!state.isIptv && state.tmdbId > 0) {
+                    // Suggestions slideshow — shown whenever we have suggestions
+                    // (catalog siblings for addon/torrent/anime, or TMDB recs).
+                    if (!state.isIptv && (state.suggestions.isNotEmpty() || state.tmdbId > 0)) {
                         ControlButton(
                             icon = Icons.Filled.ViewCarousel,
                             contentDescription = "Suggestions",
