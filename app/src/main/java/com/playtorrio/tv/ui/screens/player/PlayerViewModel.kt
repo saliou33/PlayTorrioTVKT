@@ -733,7 +733,43 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    /** Anime series item → resolve first episode (race sources) → swap in-place. */
+    private data class AnimeResolved(
+        val stream: com.playtorrio.tv.data.anime.AnimeStreamResult,
+        val winningEmbed: com.playtorrio.tv.data.anime.AnimeEmbed?,
+        val allEmbeds: List<com.playtorrio.tv.data.anime.AnimeEmbed>,
+    )
+
+    /** Resolve a playable stream for an anime episode by racing the available
+     *  sources (first success wins). Shared by first-play and episode-switch. */
+    private suspend fun resolveAnimeEpisode(anilistId: Int, episode: Int, category: String): AnimeResolved? {
+        val svc = com.playtorrio.tv.data.anime.AnimeService
+        val anime = runCatching { svc.getDetails(anilistId) }.getOrNull() ?: return null
+        val series = runCatching { svc.resolveAnikoto(anime) }.getOrNull()
+        val titles = listOf(anime.titleEnglish, anime.titleRomaji, anime.titleNative)
+            .filter { it.isNotBlank() }.distinct()
+        val allEmbeds = svc.buildAllEmbeds(
+            anilistId = anilistId, episode = episode, series = series,
+            category = null, animeTitles = titles, isAdult = anime.isAdult
+        )
+        val target = allEmbeds.filter { it.category == category }.ifEmpty { allEmbeds }
+        for (embed in target) {
+            val r = runCatching { svc.extractDirect(embed) }.getOrNull()
+            if (r != null) return AnimeResolved(r, embed, allEmbeds)
+        }
+        return null
+    }
+
+    private fun animeTracksJsonOf(r: com.playtorrio.tv.data.anime.AnimeStreamResult): String =
+        org.json.JSONArray().apply {
+            r.tracks.forEach { put(org.json.JSONObject().put("url", it.url).put("label", it.label).put("isDefault", it.isDefault)) }
+        }.toString()
+
+    private fun animeEmbedsJsonOf(embeds: List<com.playtorrio.tv.data.anime.AnimeEmbed>): String =
+        org.json.JSONArray().apply {
+            embeds.forEach { put(org.json.JSONObject().put("url", it.url).put("server", it.server).put("category", it.category).put("label", it.label)) }
+        }.toString()
+
+    /** Anime series item → resolve first episode → swap in-place. */
     private fun playAnimeItem(anilistId: Int, title: String, poster: String?) {
         if (_uiState.value.isSwitchingEpisode) return
         beginInPlaceSwap(title, poster, isMovie = false, tmdbId = 0, status = "Loading \"$title\"…")
@@ -743,33 +779,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             try {
                 teardownForSwap()
-                val anime = runCatching { com.playtorrio.tv.data.anime.AnimeService.getDetails(anilistId) }.getOrNull()
-                    ?: throw IllegalStateException("Anime details unavailable")
-                val series = runCatching { com.playtorrio.tv.data.anime.AnimeService.resolveAnikoto(anime) }.getOrNull()
-                val titles = listOf(anime.titleEnglish, anime.titleRomaji, anime.titleNative)
-                    .filter { it.isNotBlank() }.distinct()
-                val allEmbeds = com.playtorrio.tv.data.anime.AnimeService.buildAllEmbeds(
-                    anilistId = anilistId, episode = 1, series = series,
-                    category = null, animeTitles = titles, isAdult = anime.isAdult
-                )
-                val target = allEmbeds.filter { it.category == category }.ifEmpty { allEmbeds }
-                var winner: com.playtorrio.tv.data.anime.AnimeStreamResult? = null
-                var winningEmbed: com.playtorrio.tv.data.anime.AnimeEmbed? = null
-                for (embed in target) {
-                    val r = runCatching { com.playtorrio.tv.data.anime.AnimeService.extractDirect(embed) }.getOrNull()
-                    if (r != null) { winner = r; winningEmbed = embed; break }
-                }
-                val w = winner
-                if (w == null) {
+                val res = resolveAnimeEpisode(anilistId, 1, category)
+                if (res == null) {
                     _uiState.update { it.copy(isSwitchingEpisode = false, isConnecting = false, error = "No source for \"$title\"") }
                     return@launch
                 }
-                val tracksJson = org.json.JSONArray().apply {
-                    w.tracks.forEach { put(org.json.JSONObject().put("url", it.url).put("label", it.label).put("isDefault", it.isDefault)) }
-                }.toString()
-                val embedsJson = org.json.JSONArray().apply {
-                    allEmbeds.forEach { put(org.json.JSONObject().put("url", it.url).put("server", it.server).put("category", it.category).put("label", it.label)) }
-                }.toString()
+                val w = res.stream
+                val tracksJson = animeTracksJsonOf(w)
+                val embedsJson = animeEmbedsJsonOf(res.allEmbeds)
                 withContext(Dispatchers.Main) {
                     addedExternalSubConfigs.clear(); addedExternalSubLabels.clear()
                     player?.release(); player = null
@@ -778,15 +795,72 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             isSwitchingEpisode = false, isStreamingMode = true, isMagnet = false, torrentHash = null,
                             episodeTitle = "Episode 1", seasonNumber = 1, episodeNumber = 1,
                             animeOrigin = w.origin, animeTracksJson = tracksJson, animeEmbedsJson = embedsJson,
-                            animeServer = winningEmbed?.server, animeEmbedUrl = winningEmbed?.url,
+                            animeServer = res.winningEmbed?.server, animeEmbedUrl = res.winningEmbed?.url,
                         )
                     }
                     createStreamingPlayer(w.url, w.referer, animeTracksJson = tracksJson, animeOrigin = w.origin)
                 }
+                runCatching { loadEpisodesForCurrentSeries() }
                 maybeLoadSuggestions()
             } catch (e: Exception) {
                 Log.e(TAG, "playAnimeItem failed", e)
                 _uiState.update { it.copy(isSwitchingEpisode = false, isConnecting = false, error = e.message ?: "Couldn't play \"$title\"") }
+            }
+        }
+    }
+
+    /** Switch to another episode of the CURRENT anime (keeps the episode list). */
+    private fun switchToAnimeEpisode(epNum: Int) {
+        val anilistId = resumeAnimeId?.toIntOrNull() ?: return
+        val category = resumeAnimeCategory ?: "sub"
+        pendingAutoPickEpisode = false
+        flushProgressInternal()
+        resetUpNextForNewItem()
+        _uiState.update {
+            it.copy(
+                showEpisodesPanel = false,
+                showEpisodeSourceOverlay = false,
+                isSwitchingEpisode = true,
+                isConnecting = true,
+                connectionStatus = "Loading episode $epNum…",
+                seasonNumber = 1,
+                episodeNumber = epNum,
+                episodeTitle = "Episode $epNum",
+                duration = 0L,
+                currentPosition = 0L,
+                activeSkipSegment = null,
+                skipSegments = emptyList(),
+                externalSubtitles = emptyList(),
+                nextEpisode = null,
+            )
+        }
+        viewModelScope.launch {
+            try {
+                teardownForSwap()
+                val res = resolveAnimeEpisode(anilistId, epNum, category)
+                if (res == null) {
+                    _uiState.update { it.copy(isSwitchingEpisode = false, isConnecting = false, error = "No source for episode $epNum") }
+                    return@launch
+                }
+                val w = res.stream
+                val tracksJson = animeTracksJsonOf(w)
+                val embedsJson = animeEmbedsJsonOf(res.allEmbeds)
+                withContext(Dispatchers.Main) {
+                    addedExternalSubConfigs.clear(); addedExternalSubLabels.clear()
+                    player?.release(); player = null
+                    _uiState.update {
+                        it.copy(
+                            isSwitchingEpisode = false, isStreamingMode = true, isMagnet = false, torrentHash = null,
+                            animeOrigin = w.origin, animeTracksJson = tracksJson, animeEmbedsJson = embedsJson,
+                            animeServer = res.winningEmbed?.server, animeEmbedUrl = res.winningEmbed?.url,
+                        )
+                    }
+                    createStreamingPlayer(w.url, w.referer, animeTracksJson = tracksJson, animeOrigin = w.origin)
+                }
+                computeNextEpisode()
+            } catch (e: Exception) {
+                Log.e(TAG, "switchToAnimeEpisode failed", e)
+                _uiState.update { it.copy(isSwitchingEpisode = false, isConnecting = false, error = e.message ?: "Couldn't load episode $epNum") }
             }
         }
     }
@@ -3077,9 +3151,36 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun loadEpisodesForCurrentSeries() {
         val s = _uiState.value
+        if (s.isLoadingEpisodes) return
+
+        // Anime episodes come from AniList (Anikoto), not TMDB.
+        val animeId = resumeAnimeId?.toIntOrNull()
+        if (animeId != null && s.tmdbId <= 0) {
+            _uiState.update { it.copy(isLoadingEpisodes = true) }
+            viewModelScope.launch {
+                try {
+                    val anime = com.playtorrio.tv.data.anime.AnimeService.getDetails(animeId)
+                    val eps = com.playtorrio.tv.data.anime.AnimeService.getEpisodes(anime).map { ae ->
+                        com.playtorrio.tv.data.model.Episode(
+                            id = ae.number,
+                            episodeNumber = ae.number,
+                            name = ae.title,
+                            stillPath = null,
+                            seasonNumber = 1,
+                        )
+                    }
+                    _uiState.update { it.copy(episodes = eps, isLoadingEpisodes = false) }
+                    computeNextEpisode()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to load anime episodes", e)
+                    _uiState.update { it.copy(isLoadingEpisodes = false) }
+                }
+            }
+            return
+        }
+
         val tvId = s.tmdbId.takeIf { it > 0 } ?: return
         val season = s.seasonNumber ?: return
-        if (s.isLoadingEpisodes) return
         _uiState.update { it.copy(isLoadingEpisodes = true) }
         viewModelScope.launch {
             try {
@@ -3112,6 +3213,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         // Skip no-op
         if (episode.seasonNumber == s.seasonNumber && episode.episodeNumber == s.episodeNumber) {
             dismissEpisodesPanel()
+            return
+        }
+
+        // Anime: resolve the episode via AniList sources (no TMDB extraction).
+        if (resumeAnimeId != null) {
+            switchToAnimeEpisode(episode.episodeNumber)
             return
         }
 
