@@ -200,6 +200,20 @@ data class PlayerUiState(
     val showEpisodesPanel: Boolean = false,
     val nextEpisode: com.playtorrio.tv.data.model.Episode? = null,
     val isSwitchingEpisode: Boolean = false,
+    /** Auto-play the next episode when the current one ends. Session mirror of
+     *  AppPreferences.autoplayNext; toggleable from the player controls. */
+    val autoplayNext: Boolean = true,
+    // ── Up Next overlay + suggestions slideshow ──
+    /** Recommendation shown as "Up Next" for movies (or when there's no next
+     *  episode). Series use [nextEpisode] instead. */
+    val upNextSuggestion: SuggestionItem? = null,
+    val showUpNextOverlay: Boolean = false,
+    /** "More like this" suggestions (TMDB recommendations), paginated. */
+    val suggestions: List<SuggestionItem> = emptyList(),
+    val showSuggestionsPanel: Boolean = false,
+    val isLoadingSuggestions: Boolean = false,
+    val suggestionsPage: Int = 1,
+    val suggestionsHasMore: Boolean = true,
     // Episode source picker (when switching ep in non-streaming mode)
     val showEpisodeSourceOverlay: Boolean = false,
     val episodeOverlayKind: EpisodeOverlayKind = EpisodeOverlayKind.NONE,
@@ -213,6 +227,15 @@ data class PlayerUiState(
 
 enum class EpisodeOverlayKind { NONE, TORRENT, ADDON_STREAM }
 
+/** A "more like this" suggestion used by the Up Next overlay and the in-player
+ *  suggestions slideshow. Backed by TMDB recommendations. */
+data class SuggestionItem(
+    val tmdbId: Int,
+    val title: String,
+    val posterUrl: String?,
+    val isMovie: Boolean,
+)
+
 class PlayerViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
@@ -223,6 +246,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     val uiState: StateFlow<PlayerUiState> = _uiState
 
     var player: ExoPlayer? = null; private set
+    // Up Next overlay bookkeeping.
+    private var upNextHideJob: Job? = null
+    private var upNextTriggered = false
+    /** When autoplay advances to a torrent/addon episode, auto-pick the top
+     *  source instead of waiting for the user to choose in the overlay. */
+    private var pendingAutoPickEpisode = false
     private var currentStreamUrl: String? = null
     /** Track which stream URL we already auto-pinned highest quality for. */
     private var autoQualityAppliedForUrl: String? = null
@@ -316,6 +345,263 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private var lastProgressSaveAt: Long = 0L
     /** Captured from createStreamingPlayer so episode-switching can reuse the same headers. */
     private var currentReferer: String = ""
+
+    init {
+        _uiState.update { it.copy(autoplayNext = AppPreferences.autoplayNext) }
+    }
+
+    fun toggleAutoplayNext() {
+        val v = !_uiState.value.autoplayNext
+        AppPreferences.autoplayNext = v
+        _uiState.update { it.copy(autoplayNext = v) }
+    }
+
+    // ── Up Next overlay ──────────────────────────────────────────────────────
+
+    /** Called ~each position tick. Shows the Up Next overlay once we pass the
+     *  midpoint, then auto-hides it after the user-configured duration. */
+    private fun maybeShowUpNext(pos: Long, dur: Long) {
+        if (upNextTriggered) return
+        if (!AppPreferences.upNextOverlayEnabled) return
+        if (dur <= 0L || pos < dur / 2) return
+        val s = _uiState.value
+        if (s.isIptv || s.isSwitchingEpisode) return
+        val hasNext = (!s.isMovie && s.nextEpisode != null) || s.upNextSuggestion != null
+        if (!hasNext) return
+        upNextTriggered = true
+        _uiState.update { it.copy(showUpNextOverlay = true) }
+        upNextHideJob?.cancel()
+        upNextHideJob = viewModelScope.launch {
+            delay(AppPreferences.upNextOverlaySec * 1000L)
+            _uiState.update { it.copy(showUpNextOverlay = false) }
+        }
+    }
+
+    fun dismissUpNextOverlay() {
+        upNextHideJob?.cancel()
+        _uiState.update { it.copy(showUpNextOverlay = false) }
+    }
+
+    /** Play whatever the Up Next card points at (next episode or a suggestion). */
+    fun playUpNext() {
+        val s = _uiState.value
+        dismissUpNextOverlay()
+        when {
+            !s.isMovie && s.nextEpisode != null -> playNextEpisode()
+            s.upNextSuggestion != null -> playSuggestion(s.upNextSuggestion!!)
+        }
+    }
+
+    private fun resetUpNextForNewItem() {
+        upNextTriggered = false
+        upNextHideJob?.cancel()
+        _uiState.update { it.copy(showUpNextOverlay = false) }
+    }
+
+    /** Fired when a VOD reaches STATE_ENDED. Auto-advances if enabled. */
+    private fun onVodEnded() {
+        val s = _uiState.value
+        if (!s.autoplayNext) return
+        when {
+            !s.isMovie && s.nextEpisode != null -> playNextEpisodeAuto()
+            s.upNextSuggestion != null -> playSuggestion(s.upNextSuggestion!!)
+        }
+    }
+
+    fun playNextEpisodeAuto() {
+        pendingAutoPickEpisode = true
+        playNextEpisode()
+    }
+
+    // ── Suggestions (TMDB "recommendations") ─────────────────────────────────
+
+    private suspend fun fetchSuggestions(
+        tmdbId: Int, isMovie: Boolean, page: Int
+    ): Pair<List<SuggestionItem>, Boolean> = runCatching {
+        val resp = if (isMovie)
+            TmdbClient.api.getMovieRecommendations(tmdbId, TmdbClient.API_KEY, page)
+        else
+            TmdbClient.api.getTvRecommendations(tmdbId, TmdbClient.API_KEY, page)
+        val items = resp.results.mapNotNull { m ->
+            val t = m.title ?: m.name ?: return@mapNotNull null
+            val mv = m.mediaType?.let { it == "movie" } ?: (m.title != null)
+            SuggestionItem(m.id, t, m.posterUrl, mv)
+        }.filter { it.tmdbId != tmdbId }
+        items to (page < resp.totalPages)
+    }.getOrDefault(emptyList<SuggestionItem>() to false)
+
+    /** Load the first page of suggestions once, and seed the Up Next fallback. */
+    private fun maybeLoadSuggestions() {
+        val s = _uiState.value
+        val tmdb = s.tmdbId.takeIf { it > 0 } ?: return
+        if (s.suggestions.isNotEmpty()) return
+        viewModelScope.launch {
+            val (items, hasMore) = fetchSuggestions(tmdb, s.isMovie, 1)
+            _uiState.update {
+                it.copy(
+                    suggestions = items,
+                    suggestionsPage = 1,
+                    suggestionsHasMore = hasMore,
+                    // Only use a suggestion for Up Next when there's no next episode.
+                    upNextSuggestion = if (!it.isMovie && it.nextEpisode != null) it.upNextSuggestion
+                        else items.firstOrNull()
+                )
+            }
+        }
+    }
+
+    fun openSuggestionsPanel() {
+        _uiState.update { it.copy(showSuggestionsPanel = true, showControls = false, showUpNextOverlay = false) }
+        maybeLoadSuggestions()
+    }
+
+    fun dismissSuggestionsPanel() {
+        _uiState.update { it.copy(showSuggestionsPanel = false) }
+        showControls()
+    }
+
+    fun loadMoreSuggestions() {
+        val s = _uiState.value
+        val tmdb = s.tmdbId.takeIf { it > 0 } ?: return
+        if (s.isLoadingSuggestions || !s.suggestionsHasMore) return
+        _uiState.update { it.copy(isLoadingSuggestions = true) }
+        viewModelScope.launch {
+            val next = s.suggestionsPage + 1
+            val (items, hasMore) = fetchSuggestions(tmdb, s.isMovie, next)
+            val existing = _uiState.value.suggestions.mapTo(HashSet()) { it.tmdbId }
+            _uiState.update {
+                it.copy(
+                    suggestions = it.suggestions + items.filter { x -> x.tmdbId !in existing },
+                    suggestionsPage = if (items.isEmpty()) it.suggestionsPage else next,
+                    suggestionsHasMore = hasMore && items.isNotEmpty(),
+                    isLoadingSuggestions = false
+                )
+            }
+        }
+    }
+
+    /** Play a suggestion in-place (no leaving the player). Resolves via the
+     *  streaming extractor by TMDB id, so it works regardless of how the current
+     *  item was playing. */
+    fun playSuggestion(item: SuggestionItem) {
+        playTmdbTitle(item.tmdbId, item.isMovie, item.title, item.posterUrl)
+    }
+
+    private fun playTmdbTitle(tmdbId: Int, isMovie: Boolean, title: String, poster: String?) {
+        if (_uiState.value.isSwitchingEpisode) return
+        flushProgressInternal()
+        resetUpNextForNewItem()
+        // Reset resume context for the new title.
+        currentMagnetUri = null
+        resumeAddonId = null
+        resumeStremioType = null
+        resumeStremioId = null
+        resumeStreamPickKey = null
+        resumeStreamPickName = null
+        resumeImdbId = null
+        resumeFileIdx = null
+        resumePosterUrl = poster
+        pendingSeekMs = null
+        _uiState.update {
+            it.copy(
+                showSuggestionsPanel = false,
+                showUpNextOverlay = false,
+                isSwitchingEpisode = true,
+                isConnecting = true,
+                connectionStatus = "Loading \"$title\"…",
+                title = title,
+                isMovie = isMovie,
+                tmdbId = tmdbId,
+                seasonNumber = if (isMovie) null else 1,
+                episodeNumber = if (isMovie) null else 1,
+                episodeTitle = null,
+                duration = 0L,
+                currentPosition = 0L,
+                episodes = emptyList(),
+                nextEpisode = null,
+                upNextSuggestion = null,
+                suggestions = emptyList(),
+                suggestionsPage = 1,
+                suggestionsHasMore = true,
+                activeSkipSegment = null,
+                skipSegments = emptyList(),
+                externalSubtitles = emptyList(),
+            )
+        }
+        viewModelScope.launch {
+            try {
+                val context = getApplication<Application>()
+                val oldHash = _uiState.value.torrentHash
+                if (!oldHash.isNullOrBlank()) {
+                    runCatching { com.playtorrio.tv.data.torrent.TorrServerService.removeTorrent(oldHash) }
+                }
+                statsJob?.cancel()
+                val sourceIdx = _uiState.value.currentSourceIndex
+                val result = com.playtorrio.tv.data.streaming.StreamExtractorService.extract(
+                    context = context,
+                    sourceIdx = sourceIdx,
+                    tmdbId = tmdbId,
+                    season = if (isMovie) null else 1,
+                    episode = if (isMovie) null else 1,
+                    timeoutMs = AppPreferences.streamingExtractTimeoutSec * 1000L,
+                )
+                if (result == null) {
+                    _uiState.update {
+                        it.copy(
+                            isSwitchingEpisode = false,
+                            isConnecting = false,
+                            error = "Couldn't find a source for \"$title\""
+                        )
+                    }
+                    return@launch
+                }
+                withContext(Dispatchers.Main) {
+                    addedExternalSubConfigs.clear()
+                    addedExternalSubLabels.clear()
+                    player?.release()
+                    player = null
+                    _uiState.update {
+                        it.copy(
+                            isSwitchingEpisode = false,
+                            isStreamingMode = true,
+                            isMagnet = false,
+                            torrentHash = null,
+                        )
+                    }
+                    createStreamingPlayer(result.url, result.referer)
+                }
+                if (!isMovie) {
+                    runCatching { loadEpisodesForCurrentSeries() }
+                    launch {
+                        val segments = SkipSegmentService.fetchSegments(tmdbId, false, 1, 1)
+                        _uiState.update { it.copy(skipSegments = segments) }
+                    }
+                } else {
+                    launch {
+                        val segments = SkipSegmentService.fetchSegments(tmdbId, true, null, null)
+                        _uiState.update { it.copy(skipSegments = segments) }
+                    }
+                }
+                launch {
+                    val subs = SubtitleService.fetchSubtitles(
+                        tmdbId = tmdbId,
+                        season = if (isMovie) null else 1,
+                        episode = if (isMovie) null else 1,
+                        title = title,
+                        year = null,
+                    )
+                    _uiState.update { it.copy(externalSubtitles = subs) }
+                    updateSubtitleTrackList()
+                }
+                maybeLoadSuggestions()
+            } catch (e: Exception) {
+                Log.e(TAG, "playTmdbTitle failed", e)
+                _uiState.update {
+                    it.copy(isSwitchingEpisode = false, isConnecting = false, error = e.message)
+                }
+            }
+        }
+    }
 
     fun setResumeContext(
         posterUrl: String?,
@@ -636,6 +922,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 if (!isMovie && seasonNumber != null) {
                     launch { loadEpisodesForCurrentSeries() }
                 }
+
+                // Load "more like this" suggestions for Up Next + the slideshow.
+                maybeLoadSuggestions()
             } catch (e: Exception) {
                 Log.e("PlayerViewModel", "Stream setup failed: ${e.message}", e)
                 _uiState.update {
@@ -739,6 +1028,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     updateTracks()
                     autoSelectPendingSubtitle()
                 }
+                if (state == Player.STATE_ENDED) onVodEnded()
             }
 
             override fun onIsPlayingChanged(playing: Boolean) {
@@ -1305,6 +1595,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         lastProgressSaveAt = now
                         saveCurrentProgress(pos, dur.coerceAtLeast(0L))
                     }
+
+                    // Show the Up Next overlay once we pass the midpoint.
+                    maybeShowUpNext(pos, dur.coerceAtLeast(0L))
                 }
                 delay(200)
             }
@@ -1386,6 +1679,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
      * (no tmdbId AND no addonId / stremioId) or when the position is too small.
      */
     private fun saveCurrentProgress(positionMs: Long, durationMs: Long) {
+        if (!AppPreferences.playHistoryEnabled) return
         if (positionMs <= 0L) return
         val s = _uiState.value
         if (s.title.isBlank()) return
@@ -1595,13 +1889,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     createIptvPlayer(streamUrl, referer)
                 } else {
                     createStreamingPlayer(
-                        streamUrl = streamUrl, 
+                        streamUrl = streamUrl,
                         referer = referer,
                         animeTracksJson = animeTracksJson,
                         animeOrigin = animeOrigin,
                     )
                 }
             }
+            if (!isIptv) maybeLoadSuggestions()
         }
     }
 
@@ -1770,6 +2065,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     updateTracks()
                     autoSelectPendingSubtitle()
                 }
+                if (state == Player.STATE_ENDED) onVodEnded()
             }
 
             override fun onIsPlayingChanged(playing: Boolean) {
@@ -2613,6 +2909,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun computeNextEpisode() {
+        // Re-arm the Up Next overlay for the (possibly new) current episode.
+        resetUpNextForNewItem()
         val s = _uiState.value
         val curEp = s.episodeNumber ?: return
         val next = s.episodes.firstOrNull { it.episodeNumber == curEp + 1 }
@@ -2714,8 +3012,22 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         _uiState.update { it.copy(isLoadingEpisodeOverlay = false) }
                     }
                 }
+                // Autoplay path: auto-pick the top source so playback continues
+                // without the user having to choose in the overlay.
+                if (pendingAutoPickEpisode) {
+                    pendingAutoPickEpisode = false
+                    val st = _uiState.value
+                    when (kind) {
+                        EpisodeOverlayKind.TORRENT ->
+                            st.episodeOverlayTorrents.firstOrNull()?.let { pickEpisodeTorrent(it) }
+                        EpisodeOverlayKind.ADDON_STREAM ->
+                            st.episodeOverlayStreams.firstOrNull()?.let { pickEpisodeStremioStream(it) }
+                        EpisodeOverlayKind.NONE -> {}
+                    }
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Episode source overlay load failed", e)
+                pendingAutoPickEpisode = false
                 _uiState.update { it.copy(isLoadingEpisodeOverlay = false) }
             }
         }
@@ -2765,6 +3077,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     /** Streaming-mode switch: re-extract for new episode + swap player in-place. */
     private fun switchToStreamingEpisode(episode: com.playtorrio.tv.data.model.Episode) {
+        pendingAutoPickEpisode = false // streaming path never uses the source overlay
         val s = _uiState.value
         val tmdbId = s.tmdbId.takeIf { it > 0 } ?: return
         val sNum = episode.seasonNumber ?: s.seasonNumber ?: return

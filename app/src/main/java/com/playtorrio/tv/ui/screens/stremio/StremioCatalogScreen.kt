@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -86,6 +87,20 @@ fun StremioCatalogScreen(
 
     LaunchedEffect(addonId, type, catalogId) {
         viewModel.load(addonId, type, catalogId)
+    }
+
+    // Scroll-triggered pagination: load the next page as focus/scroll nears the
+    // end of the grid (not only when an item is clicked).
+    val shouldLoadMore by remember {
+        derivedStateOf {
+            val last = gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            last >= state.items.size - 8
+        }
+    }
+    LaunchedEffect(shouldLoadMore, state.hasMore, state.isLoadingMore) {
+        if (shouldLoadMore && state.hasMore && !state.isLoadingMore) {
+            viewModel.loadMore()
+        }
     }
 
     val selectedCatalog = state.catalogs.getOrNull(state.selectedCatalogIndex)

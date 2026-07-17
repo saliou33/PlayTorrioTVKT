@@ -161,7 +161,10 @@ object TorrentSearchService {
         synchronized(posterCache) { if (posterCache.containsKey(title)) return@withContext posterCache[title] }
         val url = runCatching {
             com.playtorrio.tv.data.api.TmdbClient.api
-                .searchMulti(title, com.playtorrio.tv.data.api.TmdbClient.API_KEY)
+                .searchMulti(
+                    apiKey = com.playtorrio.tv.data.api.TmdbClient.API_KEY,
+                    query = title,
+                )
                 .results.firstOrNull { it.posterUrl != null }?.posterUrl
         }.getOrNull()
         synchronized(posterCache) { posterCache[title] = url }

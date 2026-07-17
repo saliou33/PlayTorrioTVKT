@@ -56,8 +56,10 @@ fun AnimeScreen(
     val listFocusRequester = remember { FocusRequester() }
 
     LaunchedEffect(Unit) {
-        continueWatching.value = com.playtorrio.tv.data.watch.WatchProgressStore.load()
-            .filter { it.kind == com.playtorrio.tv.data.watch.WatchKind.ANIME }
+        continueWatching.value = if (com.playtorrio.tv.data.AppPreferences.playHistoryEnabled)
+            com.playtorrio.tv.data.watch.WatchProgressStore.load()
+                .filter { it.kind == com.playtorrio.tv.data.watch.WatchKind.ANIME }
+        else emptyList()
     }
 
     // Spotlight auto-scroll

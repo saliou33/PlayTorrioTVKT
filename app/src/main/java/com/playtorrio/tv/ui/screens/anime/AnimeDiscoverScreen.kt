@@ -6,8 +6,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
@@ -52,17 +54,61 @@ fun AnimeDiscoverScreen(navController: NavController, initialGenre: String? = nu
     var sort by remember { mutableStateOf(SORTS.first()) }
     var results by remember { mutableStateOf<List<AnimeCardModel>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
+    // Pagination: keep loading more pages as the grid scrolls to its end.
+    val gridState = rememberLazyGridState()
+    var page by remember { mutableIntStateOf(1) }
+    var hasMore by remember { mutableStateOf(true) }
+    var loadingMore by remember { mutableStateOf(false) }
+    val perPage = 40
 
+    // Reset + first page whenever the filter changes.
     LaunchedEffect(genre, sort) {
         loading = true
-        results = runCatching {
+        page = 1
+        hasMore = true
+        val first = runCatching {
             AnimeService.browse(
                 genre = genre.takeIf { it != "All" },
                 sort = sort.second,
-                perPage = 40,
+                page = 1,
+                perPage = perPage,
             )
         }.getOrDefault(emptyList())
+        results = first
+        hasMore = first.size >= perPage
         loading = false
+    }
+
+    // Load-more when scrolled near the end.
+    val shouldLoadMore by remember {
+        derivedStateOf {
+            val last = gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            last >= results.size - 8
+        }
+    }
+    LaunchedEffect(shouldLoadMore, hasMore, loadingMore, loading) {
+        if (shouldLoadMore && hasMore && !loadingMore && !loading && results.isNotEmpty()) {
+            loadingMore = true
+            val next = page + 1
+            val more = runCatching {
+                AnimeService.browse(
+                    genre = genre.takeIf { it != "All" },
+                    sort = sort.second,
+                    page = next,
+                    perPage = perPage,
+                )
+            }.getOrDefault(emptyList())
+            if (more.isEmpty()) {
+                hasMore = false
+            } else {
+                // De-dupe by id in case pages overlap.
+                val existing = results.mapTo(HashSet()) { it.id }
+                results = results + more.filter { it.id !in existing }
+                page = next
+                hasMore = more.size >= perPage
+            }
+            loadingMore = false
+        }
     }
 
     Column(Modifier.fillMaxSize().background(Bg).padding(horizontal = 40.dp, vertical = 24.dp)) {
@@ -87,11 +133,20 @@ fun AnimeDiscoverScreen(navController: NavController, initialGenre: String? = nu
             }
             else -> LazyVerticalGrid(
                 columns = GridCells.Adaptive(minSize = 130.dp),
+                state = gridState,
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+                contentPadding = PaddingValues(bottom = 32.dp)
             ) {
                 items(results) { anime ->
                     AnimeCard(anime = anime, onClick = { navController.navigate("anime_detail/${anime.id}") })
+                }
+                if (loadingMore) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(color = Accent, modifier = Modifier.size(26.dp), strokeWidth = 2.dp)
+                        }
+                    }
                 }
             }
         }

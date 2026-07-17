@@ -112,6 +112,22 @@ fun TrailerFullScreen(
         }
     }
 
+    // Pause the trailer when the app is backgrounded so audio never keeps
+    // playing after you quit; resume when it comes back to the foreground.
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, player) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            when (event) {
+                androidx.lifecycle.Lifecycle.Event.ON_STOP,
+                androidx.lifecycle.Lifecycle.Event.ON_PAUSE -> player.playWhenReady = false
+                androidx.lifecycle.Lifecycle.Event.ON_RESUME -> player.playWhenReady = true
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
+
     // System back button exits the trailer overlay (not the activity)
     BackHandler { onExit() }
 

@@ -67,6 +67,30 @@ object AppPreferences {
         get() = prefs.getBoolean("show_adult_content", false)
         set(value) = prefs.edit().putBoolean("show_adult_content", value).apply()
 
+    /** Save local play history (Continue Watching). When off, no progress is
+     *  recorded and the Continue Watching rows on Home/Anime are hidden. On by
+     *  default. */
+    var playHistoryEnabled: Boolean
+        get() = prefs.getBoolean("play_history_enabled", true)
+        set(value) = prefs.edit().putBoolean("play_history_enabled", value).apply()
+
+    /** Player: automatically play the next episode when the current one ends.
+     *  On by default; can be toggled per-session from the player too. */
+    var autoplayNext: Boolean
+        get() = prefs.getBoolean("autoplay_next", true)
+        set(value) = prefs.edit().putBoolean("autoplay_next", value).apply()
+
+    /** Player: show the "Up Next" suggestion overlay past the video midpoint. */
+    var upNextOverlayEnabled: Boolean
+        get() = prefs.getBoolean("upnext_overlay_enabled", true)
+        set(value) = prefs.edit().putBoolean("upnext_overlay_enabled", value).apply()
+
+    /** Player: seconds the "Up Next" overlay stays on screen before auto-hiding.
+     *  Clamped to 5..30. */
+    var upNextOverlaySec: Int
+        get() = prefs.getInt("upnext_overlay_sec", 15).coerceIn(5, 30)
+        set(value) = prefs.edit().putInt("upnext_overlay_sec", value.coerceIn(5, 30)).apply()
+
     /** Live TV: persist the "alive only" filter + the set of channel URLs found
      *  dead by the alive-check, so the filter survives app restarts. */
     var liveTvAliveOnly: Boolean

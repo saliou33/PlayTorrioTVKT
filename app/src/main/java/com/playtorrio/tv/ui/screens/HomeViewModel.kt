@@ -255,13 +255,15 @@ class HomeViewModel : ViewModel() {
         lastFocusedItemIndex = itemIndex
     }
 
-    /** Reload continue-watching from disk; called on screen resume. */
+    /** Reload continue-watching from disk; called on screen resume. Honors the
+     *  "Save Play History" setting — when off, the row stays hidden. */
     fun refreshContinueWatching() {
+        val list = if (com.playtorrio.tv.data.AppPreferences.playHistoryEnabled)
+            WatchProgressStore.load() else emptyList()
         _uiState.value = _uiState.value.copy(
-            continueWatching = WatchProgressStore.load(),
+            continueWatching = list,
             // Auto-exit edit mode if the list became empty
-            continueWatchingEditMode = _uiState.value.continueWatchingEditMode
-                && WatchProgressStore.load().isNotEmpty()
+            continueWatchingEditMode = _uiState.value.continueWatchingEditMode && list.isNotEmpty()
         )
     }
 

@@ -183,6 +183,11 @@ fun HomeScreen(navController: NavController, viewModel: HomeViewModel = viewMode
                 viewModel.refreshAddonRows()
                 viewModel.refreshContinueWatching()
             }
+            // Stop the background trailer when the app is backgrounded or the
+            // screen is paused, so audio never keeps playing after you quit.
+            if (event == Lifecycle.Event.ON_STOP || event == Lifecycle.Event.ON_PAUSE) {
+                viewModel.forceStopTrailer()
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
 

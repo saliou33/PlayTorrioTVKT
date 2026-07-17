@@ -263,16 +263,69 @@ fun SettingsScreen(navController: NavController) {
             )
 
             Spacer(Modifier.height(16.dp))
-            // Manual update check → in-app updater.
+            var autoplayNext by remember { mutableStateOf(AppPreferences.autoplayNext) }
+            SettingsToggleRow(
+                title = "Autoplay next",
+                description = "When a video ends, automatically play the next episode or a suggestion",
+                checked = autoplayNext,
+                onCheckedChange = {
+                    autoplayNext = it
+                    AppPreferences.autoplayNext = it
+                }
+            )
+
+            Spacer(Modifier.height(16.dp))
+            var upNextEnabled by remember { mutableStateOf(AppPreferences.upNextOverlayEnabled) }
+            SettingsToggleRow(
+                title = "Up Next overlay",
+                description = "Show a next-video suggestion with a thumbnail past the video's midpoint",
+                checked = upNextEnabled,
+                onCheckedChange = {
+                    upNextEnabled = it
+                    AppPreferences.upNextOverlayEnabled = it
+                }
+            )
+
+            if (upNextEnabled) {
+                Spacer(Modifier.height(12.dp))
+                var upNextSec by remember { mutableStateOf(AppPreferences.upNextOverlaySec) }
+                SettingsSliderRow(
+                    title = "Up Next duration",
+                    description = "Seconds the Up Next overlay stays visible",
+                    value = upNextSec,
+                    range = 5..30,
+                    suffix = "s",
+                    onValueChange = {
+                        upNextSec = it
+                        AppPreferences.upNextOverlaySec = it
+                    }
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+            var playHistory by remember { mutableStateOf(AppPreferences.playHistoryEnabled) }
+            SettingsToggleRow(
+                title = "Save play history",
+                description = "Keep a Continue Watching list on Home and Anime. Turn off to stop tracking",
+                checked = playHistory,
+                onCheckedChange = {
+                    playHistory = it
+                    AppPreferences.playHistoryEnabled = it
+                }
+            )
+
+            Spacer(Modifier.height(16.dp))
+            // Manual update check → in-app updater. Compact button (not a full-width
+            // row) so it reads as an action, aligned left with the section.
             var upRowFocused by remember { mutableStateOf(false) }
             Row(
-                modifier = Modifier.fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(if (upRowFocused) Color.White.copy(0.12f) else Color.White.copy(0.05f))
+                modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(if (upRowFocused) AccentPrimary else AccentPrimary.copy(alpha = 0.18f))
                     .border(
-                        if (upRowFocused) 2.dp else 1.dp,
-                        if (upRowFocused) Color(0xFF818CF8) else Color.White.copy(0.1f),
-                        RoundedCornerShape(12.dp)
+                        1.dp,
+                        if (upRowFocused) AccentPrimary else AccentPrimary.copy(alpha = 0.35f),
+                        RoundedCornerShape(10.dp)
                     )
                     .onFocusChanged { upRowFocused = it.isFocused }
                     .clickable(enabled = !upChecking && !upBusy) {
@@ -284,17 +337,21 @@ fun SettingsScreen(navController: NavController) {
                             else android.widget.Toast.makeText(context, "You're on the latest version", android.widget.Toast.LENGTH_SHORT).show()
                         }
                     }
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Column(Modifier.weight(1f)) {
-                    Text("Check for updates", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        "Current version ${com.playtorrio.tv.BuildConfig.VERSION_NAME}",
-                        color = Color.White.copy(0.5f), fontSize = 12.sp
-                    )
-                }
-                if (upChecking) CircularProgressIndicator(color = Color(0xFF818CF8), modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                Text(
+                    "Check for updates",
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    "v${com.playtorrio.tv.BuildConfig.VERSION_NAME}",
+                    color = Color.White.copy(0.7f), fontSize = 11.sp
+                )
+                if (upChecking) CircularProgressIndicator(color = Color.White, modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
             }
 
             val info = upInfo

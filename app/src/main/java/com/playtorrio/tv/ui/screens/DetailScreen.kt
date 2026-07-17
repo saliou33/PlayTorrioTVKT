@@ -549,7 +549,8 @@ private fun DetailContent(
                                 letterSpacing = 0.3.sp
                             ),
                             color = AccentSecondary.copy(alpha = 0.8f),
-                            maxLines = 2
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
 

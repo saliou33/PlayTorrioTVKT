@@ -11,8 +11,10 @@ import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -78,6 +80,7 @@ fun PlayerScreen(viewModel: PlayerViewModel) {
         state.showSourcesPanel,
         state.showEpisodesPanel,
         state.showEpisodeSourceOverlay,
+        state.showSuggestionsPanel,
     ) {
         if (state.showControls &&
             !state.showSubtitleOverlay &&
@@ -87,7 +90,8 @@ fun PlayerScreen(viewModel: PlayerViewModel) {
             !state.showSubtitleStylePanel &&
             !state.showSourcesPanel &&
             !state.showEpisodesPanel &&
-            !state.showEpisodeSourceOverlay
+            !state.showEpisodeSourceOverlay &&
+            !state.showSuggestionsPanel
         ) {
             delay(250)
             try { playPauseFocusRequester.requestFocus() } catch (_: Exception) {}
@@ -99,7 +103,8 @@ fun PlayerScreen(viewModel: PlayerViewModel) {
             !state.showPauseOverlay &&
             !state.showSubtitleStylePanel &&
             !state.showEpisodesPanel &&
-            !state.showEpisodeSourceOverlay
+            !state.showEpisodeSourceOverlay &&
+            !state.showSuggestionsPanel
         ) {
             try { containerFocusRequester.requestFocus() } catch (_: Exception) {}
         }
@@ -142,7 +147,8 @@ fun PlayerScreen(viewModel: PlayerViewModel) {
                         state.showSubtitleStylePanel ||
                         state.showSourcesPanel ||
                         state.showEpisodesPanel ||
-                        state.showEpisodeSourceOverlay
+                        state.showEpisodeSourceOverlay ||
+                        state.showSuggestionsPanel
                 if (panelOpen) return@onKeyEvent false
 
                 if (keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_UP) {
@@ -188,7 +194,9 @@ fun PlayerScreen(viewModel: PlayerViewModel) {
                                 val nearEnd = state.duration > 0 &&
                                     state.currentPosition >= (state.duration * 0.90).toLong()
                                 val nextEpVisible = hasNext && nearEnd
-                                if (nextEpVisible) {
+                                if (state.showUpNextOverlay) {
+                                    viewModel.playUpNext()
+                                } else if (nextEpVisible) {
                                     viewModel.playNextEpisode()
                                 } else if (state.activeSkipSegment != null) {
                                     viewModel.skipActiveSegment()
@@ -386,7 +394,8 @@ fun PlayerScreen(viewModel: PlayerViewModel) {
                 !state.showSubtitleStylePanel &&
                 !state.showSourcesPanel &&
                 !state.showEpisodesPanel &&
-                !state.showEpisodeSourceOverlay,
+                !state.showEpisodeSourceOverlay &&
+                !state.showSuggestionsPanel,
             enter = fadeIn(tween(200)),
             exit = fadeOut(tween(200))
         ) {
@@ -446,11 +455,18 @@ fun PlayerScreen(viewModel: PlayerViewModel) {
 
         // ── Subtitle style panel ──
         SubtitleStylePanel(state, viewModel)
+
+        // ── Up Next suggestion card (past the midpoint) ──
+        UpNextOverlay(state, viewModel)
+
+        // ── Suggestions slideshow ("more like this") ──
+        SuggestionsPanel(state, viewModel)
     }
 }
 
 private fun handleBackPress(viewModel: PlayerViewModel, state: PlayerUiState, onExit: () -> Unit) {
     when {
+        state.showSuggestionsPanel -> viewModel.dismissSuggestionsPanel()
         state.showSubtitleStylePanel -> viewModel.hideSubtitleStylePanel()
         state.showSubtitleOverlay -> viewModel.hideSubtitleOverlay()
         state.showAudioOverlay -> viewModel.hideAudioOverlay()
@@ -459,6 +475,7 @@ private fun handleBackPress(viewModel: PlayerViewModel, state: PlayerUiState, on
         state.showSourcesPanel -> viewModel.dismissSourcesPanel()
         state.showEpisodeSourceOverlay -> viewModel.dismissEpisodeSourceOverlay()
         state.showEpisodesPanel -> viewModel.dismissEpisodesPanel()
+        state.showUpNextOverlay -> viewModel.dismissUpNextOverlay()
         state.showPauseOverlay -> viewModel.dismissPauseOverlay()
         state.showControls -> viewModel.hideControls()
         else -> onExit()
@@ -797,6 +814,31 @@ private fun PlayerControlsOverlay(
                             icon = Icons.Filled.PlaylistPlay,
                             contentDescription = "Episodes",
                             onClick = { viewModel.showEpisodesPanel() },
+                            upFocusRequester = progressBarFocusRequester,
+                            onDownKey = { viewModel.hideControls() },
+                            onFocused = { viewModel.scheduleControlsHide() }
+                        )
+                    }
+
+                    // Suggestions slideshow ("more like this"), when we have a TMDB id
+                    if (!state.isIptv && state.tmdbId > 0) {
+                        ControlButton(
+                            icon = Icons.Filled.ViewCarousel,
+                            contentDescription = "Suggestions",
+                            onClick = { viewModel.openSuggestionsPanel() },
+                            upFocusRequester = progressBarFocusRequester,
+                            onDownKey = { viewModel.hideControls() },
+                            onFocused = { viewModel.scheduleControlsHide() }
+                        )
+                    }
+
+                    // Autoplay next toggle
+                    if (!state.isIptv) {
+                        ControlButton(
+                            icon = if (state.autoplayNext) Icons.Filled.MotionPhotosAuto
+                                   else Icons.Filled.MotionPhotosPause,
+                            contentDescription = if (state.autoplayNext) "Autoplay on" else "Autoplay off",
+                            onClick = { viewModel.toggleAutoplayNext() },
                             upFocusRequester = progressBarFocusRequester,
                             onDownKey = { viewModel.hideControls() },
                             onFocused = { viewModel.scheduleControlsHide() }
@@ -2327,7 +2369,16 @@ private fun LoadingOverlay(state: PlayerUiState) {
                         contentScale = ContentScale.Fit
                     )
                 } else {
-                    Text(state.title, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        state.title,
+                        color = Color.White,
+                        fontSize = 28.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.widthIn(max = 720.dp)
+                    )
                 }
 
                 if (state.seasonNumber != null && state.episodeNumber != null) {
@@ -2786,6 +2837,247 @@ private fun SourceListItemCard(
                     overflow = TextOverflow.Ellipsis
                 )
             }
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════
+// UP NEXT OVERLAY + SUGGESTIONS SLIDESHOW
+// ════════════════════════════════════════════════════════════
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun UpNextOverlay(state: PlayerUiState, viewModel: PlayerViewModel) {
+    // Hide while controls / any panel is showing to avoid clutter.
+    val panelsOpen = state.showControls || state.showPauseOverlay ||
+        state.showEpisodesPanel || state.showEpisodeSourceOverlay ||
+        state.showSourcesPanel || state.showSubtitleOverlay ||
+        state.showAudioOverlay || state.showQualityOverlay ||
+        state.showSpeedOverlay || state.showSubtitleStylePanel ||
+        state.showSuggestionsPanel || state.isSwitchingEpisode
+
+    val ep = state.nextEpisode
+    val sug = state.upNextSuggestion
+    val useEpisode = !state.isMovie && ep != null
+
+    val thumb: String? = if (useEpisode) (ep?.stillUrl ?: state.backdropUrl) else sug?.posterUrl
+    val label = if (useEpisode) "NEXT EPISODE" else "UP NEXT"
+    val mainTitle = if (useEpisode) {
+        (ep?.name?.takeIf { it.isNotBlank() } ?: "Episode ${ep?.episodeNumber}")
+    } else (sug?.title ?: "")
+    val subtitle = if (useEpisode) {
+        val s = ep?.seasonNumber ?: state.seasonNumber
+        "S${s} E${ep?.episodeNumber} · ${state.title}"
+    } else state.title
+
+    AnimatedVisibility(
+        visible = state.showUpNextOverlay && !panelsOpen && (useEpisode || sug != null),
+        enter = fadeIn(tween(220)) + slideInHorizontally(tween(220)) { -it / 3 },
+        exit = fadeOut(tween(180)),
+        modifier = Modifier
+            .fillMaxSize()
+    ) {
+        Box(Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 48.dp, bottom = 64.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color(0xFF0C0C18).copy(alpha = 0.92f))
+                    .background(
+                        Brush.horizontalGradient(
+                            listOf(AccentColor.copy(alpha = 0.10f), Color.Transparent)
+                        )
+                    )
+                    .width(420.dp)
+                    .padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                AsyncImage(
+                    model = thumb,
+                    contentDescription = mainTitle,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .width(if (useEpisode) 128.dp else 74.dp)
+                        .height(if (useEpisode) 72.dp else 108.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color.White.copy(alpha = 0.06f))
+                )
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        label,
+                        color = AccentColor,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.2.sp
+                    )
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        mainTitle,
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (subtitle.isNotBlank()) {
+                        Text(
+                            subtitle,
+                            color = Color.White.copy(alpha = 0.55f),
+                            fontSize = 12.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Icon(Icons.Filled.PlayArrow, null, tint = AccentColor, modifier = Modifier.size(15.dp))
+                        Text(
+                            if (state.autoplayNext) "OK to play now · autoplay on" else "OK to play",
+                            color = Color.White.copy(alpha = 0.7f),
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun SuggestionsPanel(state: PlayerUiState, viewModel: PlayerViewModel) {
+    AnimatedVisibility(
+        visible = state.showSuggestionsPanel,
+        enter = fadeIn(tween(200)),
+        exit = fadeOut(tween(200))
+    ) {
+        val listState = rememberLazyListState()
+        val firstFocus = remember { FocusRequester() }
+
+        // Paginate as the row nears its end.
+        val loadMore by remember {
+            derivedStateOf {
+                val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+                last >= state.suggestions.size - 4
+            }
+        }
+        LaunchedEffect(loadMore, state.suggestionsHasMore, state.isLoadingSuggestions) {
+            if (loadMore && state.suggestionsHasMore && !state.isLoadingSuggestions) {
+                viewModel.loadMoreSuggestions()
+            }
+        }
+        LaunchedEffect(state.suggestions.isNotEmpty()) {
+            if (state.suggestions.isNotEmpty()) {
+                delay(120)
+                runCatching { firstFocus.requestFocus() }
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color.Transparent, Color.Black.copy(alpha = 0.92f))
+                    )
+                )
+        ) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth()
+                    .padding(start = 48.dp, end = 48.dp, bottom = 40.dp)
+            ) {
+                Text(
+                    "MORE LIKE THIS",
+                    color = Color.White,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp
+                )
+                Spacer(Modifier.height(12.dp))
+                if (state.suggestions.isEmpty()) {
+                    Text(
+                        if (state.isLoadingSuggestions) "Finding suggestions…" else "No suggestions found.",
+                        color = Color.White.copy(alpha = 0.5f),
+                        fontSize = 13.sp
+                    )
+                } else {
+                    LazyRow(
+                        state = listState,
+                        modifier = Modifier.fillMaxWidth().focusGroup(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        itemsIndexed(state.suggestions, key = { i, s -> "${s.tmdbId}_$i" }) { index, item ->
+                            SuggestionCard(
+                                item = item,
+                                focusRequester = if (index == 0) firstFocus else null,
+                                onClick = { viewModel.playSuggestion(item) }
+                            )
+                        }
+                        if (state.isLoadingSuggestions) {
+                            item {
+                                Box(
+                                    Modifier.width(140.dp).height(210.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    CircularProgressIndicator(color = AccentColor, modifier = Modifier.size(26.dp), strokeWidth = 2.dp)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun SuggestionCard(
+    item: SuggestionItem,
+    focusRequester: FocusRequester?,
+    onClick: () -> Unit
+) {
+    var isFocused by remember { mutableStateOf(false) }
+    Card(
+        onClick = onClick,
+        modifier = Modifier
+            .width(140.dp)
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+            .onFocusChanged { isFocused = it.isFocused },
+        colors = CardDefaults.colors(
+            containerColor = Color(0xFF14141F),
+            focusedContainerColor = Color(0xFF1E1E30)
+        ),
+        shape = CardDefaults.shape(RoundedCornerShape(10.dp)),
+        scale = CardDefaults.scale(focusedScale = 1.06f),
+        border = CardDefaults.border(
+            focusedBorder = Border(androidx.compose.foundation.BorderStroke(2.dp, AccentColor))
+        )
+    ) {
+        Column {
+            AsyncImage(
+                model = item.posterUrl,
+                contentDescription = item.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .width(140.dp)
+                    .height(200.dp)
+                    .clip(RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp))
+                    .background(Color.White.copy(alpha = 0.05f))
+            )
+            Text(
+                item.title,
+                color = if (isFocused) Color.White else Color.White.copy(alpha = 0.8f),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+            )
         }
     }
 }
