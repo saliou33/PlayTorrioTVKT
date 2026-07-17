@@ -139,7 +139,23 @@ fun AnimeDiscoverScreen(navController: NavController, initialGenre: String? = nu
                 contentPadding = PaddingValues(bottom = 32.dp)
             ) {
                 items(results) { anime ->
-                    AnimeCard(anime = anime, onClick = { navController.navigate("anime_detail/${anime.id}") })
+                    AnimeCard(anime = anime, onClick = {
+                        // Capture the filtered list so the player's Up Next + slideshow
+                        // can offer more from this same filter.
+                        com.playtorrio.tv.data.playback.PlaybackQueue.set(
+                            label = "anime:${genre}:${sort.second}",
+                            items = results.map { a ->
+                                com.playtorrio.tv.data.playback.PlaybackQueue.Item(
+                                    kind = com.playtorrio.tv.data.playback.PlaybackQueue.Kind.ANIME,
+                                    title = a.displayTitle,
+                                    thumbnailUrl = a.coverUrl,
+                                    animeId = a.id.toString(),
+                                    isMovie = false,
+                                )
+                            }
+                        )
+                        navController.navigate("anime_detail/${anime.id}")
+                    })
                 }
                 if (loadingMore) {
                     item(span = { GridItemSpan(maxLineSpan) }) {

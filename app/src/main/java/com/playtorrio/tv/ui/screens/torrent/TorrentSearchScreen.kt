@@ -97,6 +97,20 @@ fun TorrentSearchScreen(navController: NavController) {
     }
 
     fun play(result: TorrentResult) {
+        // Capture the current result list so the player can offer an Up Next +
+        // "more from this search" slideshow (posters resolved lazily by name).
+        com.playtorrio.tv.data.playback.PlaybackQueue.set(
+            label = "torrent:$category",
+            items = results.map { r ->
+                com.playtorrio.tv.data.playback.PlaybackQueue.Item(
+                    kind = com.playtorrio.tv.data.playback.PlaybackQueue.Kind.TORRENT,
+                    title = r.name,
+                    thumbnailUrl = null,
+                    magnet = r.magnetLink,
+                    isMovie = true,
+                )
+            }
+        )
         context.startActivity(Intent(context, PlayerActivity::class.java).apply {
             putExtra("magnetUri", result.magnetLink)
             putExtra("title", result.name)

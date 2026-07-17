@@ -301,6 +301,26 @@ fun StremioCatalogScreen(
                                     .ifBlank { selectedCatalog?.type.orEmpty() }
                                     .ifBlank { type.trim() }
                                     .ifBlank { "movie" }
+                                // Capture the sibling list so the player can offer an
+                                // Up Next + "more from this list" slideshow.
+                                com.playtorrio.tv.data.playback.PlaybackQueue.set(
+                                    label = "catalog:$addonId:$catalogId",
+                                    items = shownItems.map { m ->
+                                        val mt = m.type.trim()
+                                            .ifBlank { selectedCatalog?.type.orEmpty() }
+                                            .ifBlank { type.trim() }
+                                            .ifBlank { "movie" }
+                                        com.playtorrio.tv.data.playback.PlaybackQueue.Item(
+                                            kind = com.playtorrio.tv.data.playback.PlaybackQueue.Kind.ADDON,
+                                            title = m.name,
+                                            thumbnailUrl = m.poster ?: m.background,
+                                            addonId = addonId,
+                                            stremioType = mt,
+                                            stremioId = m.id,
+                                            isMovie = mt == "movie",
+                                        )
+                                    }
+                                )
                                 val encodedId = Uri.encode(item.id)
                                 navController.navigate("stremio_detail/$addonId/$resolvedType/$encodedId")
                                 if (index >= state.items.size - 6 && state.hasMore) {

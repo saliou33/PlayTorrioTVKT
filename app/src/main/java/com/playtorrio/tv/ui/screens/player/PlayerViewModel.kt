@@ -19,6 +19,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.datasource.DefaultHttpDataSource
 import com.playtorrio.tv.data.AppPreferences
+import com.playtorrio.tv.data.playback.PlaybackQueue
 import com.playtorrio.tv.data.debrid.DebridResolver
 import com.playtorrio.tv.data.streaming.StreamExtractorService
 import com.playtorrio.tv.data.skip.SkipSegment
@@ -204,12 +205,13 @@ data class PlayerUiState(
      *  AppPreferences.autoplayNext; toggleable from the player controls. */
     val autoplayNext: Boolean = true,
     // ── Up Next overlay + suggestions slideshow ──
-    /** Recommendation shown as "Up Next" for movies (or when there's no next
+    /** Suggestion shown as "Up Next" for movies (or when there's no next
      *  episode). Series use [nextEpisode] instead. */
-    val upNextSuggestion: SuggestionItem? = null,
+    val upNextSuggestion: com.playtorrio.tv.data.playback.PlaybackQueue.Item? = null,
     val showUpNextOverlay: Boolean = false,
-    /** "More like this" suggestions (TMDB recommendations), paginated. */
-    val suggestions: List<SuggestionItem> = emptyList(),
+    /** Slideshow suggestions: sibling items from the browsed catalog/filter, or
+     *  TMDB recommendations when no queue was captured. */
+    val suggestions: List<com.playtorrio.tv.data.playback.PlaybackQueue.Item> = emptyList(),
     val showSuggestionsPanel: Boolean = false,
     val isLoadingSuggestions: Boolean = false,
     val suggestionsPage: Int = 1,
@@ -226,15 +228,6 @@ data class PlayerUiState(
 )
 
 enum class EpisodeOverlayKind { NONE, TORRENT, ADDON_STREAM }
-
-/** A "more like this" suggestion used by the Up Next overlay and the in-player
- *  suggestions slideshow. Backed by TMDB recommendations. */
-data class SuggestionItem(
-    val tmdbId: Int,
-    val title: String,
-    val posterUrl: String?,
-    val isMovie: Boolean,
-)
 
 class PlayerViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -415,9 +408,20 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     // ── Suggestions (TMDB "recommendations") ─────────────────────────────────
 
-    private suspend fun fetchSuggestions(
+    private fun currentQueueIdentity(): String {
+        val s = _uiState.value
+        return when {
+            resumeAnimeId != null -> "anime:$resumeAnimeId"
+            currentMagnetUri != null -> "torrent:$currentMagnetUri"
+            resumeStremioId != null -> "addon:$resumeStremioId"
+            s.tmdbId > 0 -> "tmdb:${s.tmdbId}"
+            else -> ""
+        }
+    }
+
+    private suspend fun fetchTmdbRecs(
         tmdbId: Int, isMovie: Boolean, page: Int
-    ): Pair<List<SuggestionItem>, Boolean> = runCatching {
+    ): Pair<List<PlaybackQueue.Item>, Boolean> = runCatching {
         val resp = if (isMovie)
             TmdbClient.api.getMovieRecommendations(tmdbId, TmdbClient.API_KEY, page)
         else
@@ -425,24 +429,55 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val items = resp.results.mapNotNull { m ->
             val t = m.title ?: m.name ?: return@mapNotNull null
             val mv = m.mediaType?.let { it == "movie" } ?: (m.title != null)
-            SuggestionItem(m.id, t, m.posterUrl, mv)
+            PlaybackQueue.Item(
+                kind = PlaybackQueue.Kind.TMDB,
+                title = t,
+                thumbnailUrl = m.posterUrl,
+                tmdbId = m.id,
+                isMovie = mv,
+            )
         }.filter { it.tmdbId != tmdbId }
         items to (page < resp.totalPages)
-    }.getOrDefault(emptyList<SuggestionItem>() to false)
+    }.getOrDefault(emptyList<PlaybackQueue.Item>() to false)
 
-    /** Load the first page of suggestions once, and seed the Up Next fallback. */
+    /** Populate the slideshow once. Prefers the sibling queue captured from the
+     *  catalog/filter the user was browsing (works for addon/torrent/anime with
+     *  no TMDB id); falls back to TMDB recommendations otherwise. */
     private fun maybeLoadSuggestions() {
         val s = _uiState.value
-        val tmdb = s.tmdbId.takeIf { it > 0 } ?: return
         if (s.suggestions.isNotEmpty()) return
+
+        // 1. Sibling queue from the browsed catalog/filter — only when the item
+        //    we're actually playing is one of the captured siblings (otherwise the
+        //    queue is stale from an earlier browse and we ignore it).
+        val queue = PlaybackQueue.items
+        val curId = currentQueueIdentity()
+        if (queue.isNotEmpty() && curId.isNotBlank() && queue.any { it.identity == curId }) {
+            val siblings = queue.filter { it.identity != curId }
+            if (siblings.isNotEmpty()) {
+                val idx = queue.indexOfFirst { it.identity == curId }
+                val nextSibling = if (idx >= 0) queue.getOrNull(idx + 1) else null
+                _uiState.update {
+                    it.copy(
+                        suggestions = siblings,
+                        suggestionsHasMore = false,
+                        upNextSuggestion = if (!it.isMovie && it.nextEpisode != null) it.upNextSuggestion
+                            else (nextSibling ?: siblings.firstOrNull())
+                    )
+                }
+                return
+            }
+        }
+
+        // 2. TMDB recommendations fallback.
+        val tmdb = s.tmdbId.takeIf { it > 0 } ?: return
         viewModelScope.launch {
-            val (items, hasMore) = fetchSuggestions(tmdb, s.isMovie, 1)
+            val (items, hasMore) = fetchTmdbRecs(tmdb, s.isMovie, 1)
             _uiState.update {
                 it.copy(
                     suggestions = items,
                     suggestionsPage = 1,
                     suggestionsHasMore = hasMore,
-                    // Only use a suggestion for Up Next when there's no next episode.
                     upNextSuggestion = if (!it.isMovie && it.nextEpisode != null) it.upNextSuggestion
                         else items.firstOrNull()
                 )
@@ -461,13 +496,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun loadMoreSuggestions() {
+        // Only the TMDB-recommendation fallback paginates; the sibling queue is finite.
+        if (PlaybackQueue.items.isNotEmpty()) return
         val s = _uiState.value
         val tmdb = s.tmdbId.takeIf { it > 0 } ?: return
         if (s.isLoadingSuggestions || !s.suggestionsHasMore) return
         _uiState.update { it.copy(isLoadingSuggestions = true) }
         viewModelScope.launch {
             val next = s.suggestionsPage + 1
-            val (items, hasMore) = fetchSuggestions(tmdb, s.isMovie, next)
+            val (items, hasMore) = fetchTmdbRecs(tmdb, s.isMovie, next)
             val existing = _uiState.value.suggestions.mapTo(HashSet()) { it.tmdbId }
             _uiState.update {
                 it.copy(
@@ -480,18 +517,26 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    /** Play a suggestion in-place (no leaving the player). Resolves via the
-     *  streaming extractor by TMDB id, so it works regardless of how the current
-     *  item was playing. */
-    fun playSuggestion(item: SuggestionItem) {
-        playTmdbTitle(item.tmdbId, item.isMovie, item.title, item.posterUrl)
+    /** Play a slideshow / Up-Next item in-place, dispatching by its source kind. */
+    fun playSuggestion(item: PlaybackQueue.Item) {
+        when (item.kind) {
+            PlaybackQueue.Kind.TMDB ->
+                playTmdbTitle(item.tmdbId, item.isMovie, item.title, item.thumbnailUrl)
+            PlaybackQueue.Kind.TORRENT ->
+                item.magnet?.let { playMagnetItem(it, item.title, item.thumbnailUrl, item.isMovie) }
+            PlaybackQueue.Kind.ADDON ->
+                item.stremioId?.let {
+                    playAddonItem(item.addonId, item.stremioType ?: "movie", it, item.title, item.thumbnailUrl)
+                }
+            PlaybackQueue.Kind.ANIME ->
+                item.animeId?.toIntOrNull()?.let { playAnimeItem(it, item.title, item.thumbnailUrl) }
+        }
     }
 
-    private fun playTmdbTitle(tmdbId: Int, isMovie: Boolean, title: String, poster: String?) {
-        if (_uiState.value.isSwitchingEpisode) return
+    /** Common state reset for an in-place swap to a brand-new title. */
+    private fun beginInPlaceSwap(title: String, poster: String?, isMovie: Boolean, tmdbId: Int, status: String) {
         flushProgressInternal()
         resetUpNextForNewItem()
-        // Reset resume context for the new title.
         currentMagnetUri = null
         resumeAddonId = null
         resumeStremioType = null
@@ -500,6 +545,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         resumeStreamPickName = null
         resumeImdbId = null
         resumeFileIdx = null
+        resumeAnimeId = null
+        resumeAnimeCategory = null
         resumePosterUrl = poster
         pendingSeekMs = null
         _uiState.update {
@@ -508,7 +555,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 showUpNextOverlay = false,
                 isSwitchingEpisode = true,
                 isConnecting = true,
-                connectionStatus = "Loading \"$title\"…",
+                connectionStatus = status,
                 title = title,
                 isMovie = isMovie,
                 tmdbId = tmdbId,
@@ -520,75 +567,60 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 episodes = emptyList(),
                 nextEpisode = null,
                 upNextSuggestion = null,
+                // Cleared so maybeLoadSuggestions() repopulates (queue persists in the holder).
                 suggestions = emptyList(),
                 suggestionsPage = 1,
                 suggestionsHasMore = true,
                 activeSkipSegment = null,
                 skipSegments = emptyList(),
                 externalSubtitles = emptyList(),
+                animeEmbeds = null,
+                animeTracksJson = null,
+                animeEmbedsJson = null,
             )
         }
+    }
+
+    private suspend fun teardownForSwap() {
+        val oldHash = _uiState.value.torrentHash
+        if (!oldHash.isNullOrBlank()) {
+            runCatching { com.playtorrio.tv.data.torrent.TorrServerService.removeTorrent(oldHash) }
+        }
+        statsJob?.cancel()
+    }
+
+    private fun playTmdbTitle(tmdbId: Int, isMovie: Boolean, title: String, poster: String?) {
+        if (_uiState.value.isSwitchingEpisode) return
+        beginInPlaceSwap(title, poster, isMovie, tmdbId, "Loading \"$title\"…")
         viewModelScope.launch {
             try {
                 val context = getApplication<Application>()
-                val oldHash = _uiState.value.torrentHash
-                if (!oldHash.isNullOrBlank()) {
-                    runCatching { com.playtorrio.tv.data.torrent.TorrServerService.removeTorrent(oldHash) }
-                }
-                statsJob?.cancel()
+                teardownForSwap()
                 val sourceIdx = _uiState.value.currentSourceIndex
-                val result = com.playtorrio.tv.data.streaming.StreamExtractorService.extract(
-                    context = context,
-                    sourceIdx = sourceIdx,
-                    tmdbId = tmdbId,
-                    season = if (isMovie) null else 1,
-                    episode = if (isMovie) null else 1,
+                val result = StreamExtractorService.extract(
+                    context = context, sourceIdx = sourceIdx, tmdbId = tmdbId,
+                    season = if (isMovie) null else 1, episode = if (isMovie) null else 1,
                     timeoutMs = AppPreferences.streamingExtractTimeoutSec * 1000L,
                 )
                 if (result == null) {
-                    _uiState.update {
-                        it.copy(
-                            isSwitchingEpisode = false,
-                            isConnecting = false,
-                            error = "Couldn't find a source for \"$title\""
-                        )
-                    }
+                    _uiState.update { it.copy(isSwitchingEpisode = false, isConnecting = false, error = "Couldn't find a source for \"$title\"") }
                     return@launch
                 }
                 withContext(Dispatchers.Main) {
-                    addedExternalSubConfigs.clear()
-                    addedExternalSubLabels.clear()
-                    player?.release()
-                    player = null
-                    _uiState.update {
-                        it.copy(
-                            isSwitchingEpisode = false,
-                            isStreamingMode = true,
-                            isMagnet = false,
-                            torrentHash = null,
-                        )
-                    }
+                    addedExternalSubConfigs.clear(); addedExternalSubLabels.clear()
+                    player?.release(); player = null
+                    _uiState.update { it.copy(isSwitchingEpisode = false, isStreamingMode = true, isMagnet = false, torrentHash = null) }
                     createStreamingPlayer(result.url, result.referer)
                 }
-                if (!isMovie) {
-                    runCatching { loadEpisodesForCurrentSeries() }
-                    launch {
-                        val segments = SkipSegmentService.fetchSegments(tmdbId, false, 1, 1)
-                        _uiState.update { it.copy(skipSegments = segments) }
-                    }
-                } else {
-                    launch {
-                        val segments = SkipSegmentService.fetchSegments(tmdbId, true, null, null)
-                        _uiState.update { it.copy(skipSegments = segments) }
-                    }
+                if (!isMovie) runCatching { loadEpisodesForCurrentSeries() }
+                launch {
+                    val segments = SkipSegmentService.fetchSegments(tmdbId, isMovie, if (isMovie) null else 1, if (isMovie) null else 1)
+                    _uiState.update { it.copy(skipSegments = segments) }
                 }
                 launch {
                     val subs = SubtitleService.fetchSubtitles(
-                        tmdbId = tmdbId,
-                        season = if (isMovie) null else 1,
-                        episode = if (isMovie) null else 1,
-                        title = title,
-                        year = null,
+                        tmdbId = tmdbId, season = if (isMovie) null else 1, episode = if (isMovie) null else 1,
+                        title = title, year = null,
                     )
                     _uiState.update { it.copy(externalSubtitles = subs) }
                     updateSubtitleTrackList()
@@ -596,9 +628,165 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 maybeLoadSuggestions()
             } catch (e: Exception) {
                 Log.e(TAG, "playTmdbTitle failed", e)
-                _uiState.update {
-                    it.copy(isSwitchingEpisode = false, isConnecting = false, error = e.message)
+                _uiState.update { it.copy(isSwitchingEpisode = false, isConnecting = false, error = e.message) }
+            }
+        }
+    }
+
+    /** Torrent-hub / stored-magnet item → resolve via TorrServer (or debrid) and swap. */
+    private fun playMagnetItem(magnet: String, title: String, poster: String?, isMovie: Boolean) {
+        if (_uiState.value.isSwitchingEpisode) return
+        beginInPlaceSwap(title, poster, isMovie, tmdbId = -1, status = "Loading \"$title\"…")
+        currentMagnetUri = magnet
+        viewModelScope.launch {
+            try {
+                val context = getApplication<Application>()
+                teardownForSwap()
+                if (AppPreferences.debridEnabled) {
+                    val url = DebridResolver.resolve(magnet, isMovie, null, null)
+                        ?: throw IllegalStateException("Debrid could not resolve this torrent")
+                    withContext(Dispatchers.Main) {
+                        player?.release(); player = null
+                        _uiState.update { it.copy(isSwitchingEpisode = false, isStreamingMode = false, isMagnet = true, torrentHash = null) }
+                        createPlayer(url)
+                    }
+                } else {
+                    com.playtorrio.tv.data.torrent.TorrServerService.ensureInitialized(context)
+                    val result = com.playtorrio.tv.data.torrent.TorrServerService.startStreaming(
+                        context = context, magnetUri = magnet, seasonNumber = null, episodeNumber = null
+                    )
+                    withContext(Dispatchers.Main) {
+                        player?.release(); player = null
+                        _uiState.update { it.copy(isSwitchingEpisode = false, isStreamingMode = false, isMagnet = true, torrentHash = result.hash) }
+                        startStatsPoller(result.hash)
+                        createPlayer(result.url)
+                    }
                 }
+                maybeLoadSuggestions()
+            } catch (e: Exception) {
+                Log.e(TAG, "playMagnetItem failed", e)
+                _uiState.update { it.copy(isSwitchingEpisode = false, isConnecting = false, error = e.message ?: "Couldn't play \"$title\"") }
+            }
+        }
+    }
+
+    /** Stremio addon catalog item → getStreams → route → swap in-place. */
+    private fun playAddonItem(addonId: String?, type: String, stremioId: String, title: String, poster: String?) {
+        if (_uiState.value.isSwitchingEpisode) return
+        val isMovie = type == "movie"
+        beginInPlaceSwap(title, poster, isMovie, tmdbId = 0, status = "Loading \"$title\"…")
+        resumeAddonId = addonId?.takeIf { it.isNotBlank() && it != "_auto_" }
+        resumeStremioType = type
+        resumeStremioId = stremioId
+        viewModelScope.launch {
+            try {
+                val context = getApplication<Application>()
+                teardownForSwap()
+                val addons = com.playtorrio.tv.data.stremio.StremioAddonRepository.getAddons()
+                val candidateTypes = listOf(type, "movie", "series", "channel", "tv").distinct()
+                var streams: List<com.playtorrio.tv.data.stremio.StremioStream> = emptyList()
+                for (t in candidateTypes) {
+                    streams = com.playtorrio.tv.data.stremio.StremioService.getStreams(addons, t, stremioId, resumeAddonId)
+                    if (streams.isNotEmpty()) break
+                }
+                val stream = streams.firstOrNull()
+                if (stream == null) {
+                    _uiState.update { it.copy(isSwitchingEpisode = false, isConnecting = false, error = "No stream for \"$title\"") }
+                    return@launch
+                }
+                resumeStreamPickKey = stream.url ?: stream.infoHash
+                resumeStreamPickName = stream.name ?: stream.title
+                when (val route = com.playtorrio.tv.data.stremio.StremioService.routeStream(stream)) {
+                    is com.playtorrio.tv.data.stremio.StreamRoute.DirectUrl -> {
+                        val referer = route.headers?.get("Referer") ?: route.headers?.get("referer") ?: ""
+                        withContext(Dispatchers.Main) {
+                            addedExternalSubConfigs.clear(); addedExternalSubLabels.clear()
+                            player?.release(); player = null
+                            _uiState.update { it.copy(isSwitchingEpisode = false, isStreamingMode = true, isMagnet = false, torrentHash = null) }
+                            if (referer.isNotBlank()) createStreamingPlayer(route.url, referer) else createPlayer(route.url)
+                        }
+                    }
+                    is com.playtorrio.tv.data.stremio.StreamRoute.Torrent -> {
+                        currentMagnetUri = route.magnet
+                        resumeFileIdx = route.fileIdx
+                        com.playtorrio.tv.data.torrent.TorrServerService.ensureInitialized(context)
+                        val result = com.playtorrio.tv.data.torrent.TorrServerService.startStreaming(
+                            context = context, magnetUri = route.magnet, seasonNumber = null, episodeNumber = null, fileIdx = route.fileIdx
+                        )
+                        withContext(Dispatchers.Main) {
+                            player?.release(); player = null
+                            _uiState.update { it.copy(isSwitchingEpisode = false, isStreamingMode = false, isMagnet = true, torrentHash = result.hash) }
+                            startStatsPoller(result.hash)
+                            createPlayer(result.url)
+                        }
+                    }
+                    else -> {
+                        _uiState.update { it.copy(isSwitchingEpisode = false, isConnecting = false, error = "Unsupported stream for \"$title\"") }
+                        return@launch
+                    }
+                }
+                maybeLoadSuggestions()
+            } catch (e: Exception) {
+                Log.e(TAG, "playAddonItem failed", e)
+                _uiState.update { it.copy(isSwitchingEpisode = false, isConnecting = false, error = e.message ?: "Couldn't play \"$title\"") }
+            }
+        }
+    }
+
+    /** Anime series item → resolve first episode (race sources) → swap in-place. */
+    private fun playAnimeItem(anilistId: Int, title: String, poster: String?) {
+        if (_uiState.value.isSwitchingEpisode) return
+        beginInPlaceSwap(title, poster, isMovie = false, tmdbId = 0, status = "Loading \"$title\"…")
+        resumeAnimeId = anilistId.toString()
+        val category = "sub"
+        resumeAnimeCategory = category
+        viewModelScope.launch {
+            try {
+                teardownForSwap()
+                val anime = runCatching { com.playtorrio.tv.data.anime.AnimeService.getDetails(anilistId) }.getOrNull()
+                    ?: throw IllegalStateException("Anime details unavailable")
+                val series = runCatching { com.playtorrio.tv.data.anime.AnimeService.resolveAnikoto(anime) }.getOrNull()
+                val titles = listOf(anime.titleEnglish, anime.titleRomaji, anime.titleNative)
+                    .filter { it.isNotBlank() }.distinct()
+                val allEmbeds = com.playtorrio.tv.data.anime.AnimeService.buildAllEmbeds(
+                    anilistId = anilistId, episode = 1, series = series,
+                    category = null, animeTitles = titles, isAdult = anime.isAdult
+                )
+                val target = allEmbeds.filter { it.category == category }.ifEmpty { allEmbeds }
+                var winner: com.playtorrio.tv.data.anime.AnimeStreamResult? = null
+                var winningEmbed: com.playtorrio.tv.data.anime.AnimeEmbed? = null
+                for (embed in target) {
+                    val r = runCatching { com.playtorrio.tv.data.anime.AnimeService.extractDirect(embed) }.getOrNull()
+                    if (r != null) { winner = r; winningEmbed = embed; break }
+                }
+                val w = winner
+                if (w == null) {
+                    _uiState.update { it.copy(isSwitchingEpisode = false, isConnecting = false, error = "No source for \"$title\"") }
+                    return@launch
+                }
+                val tracksJson = org.json.JSONArray().apply {
+                    w.tracks.forEach { put(org.json.JSONObject().put("url", it.url).put("label", it.label).put("isDefault", it.isDefault)) }
+                }.toString()
+                val embedsJson = org.json.JSONArray().apply {
+                    allEmbeds.forEach { put(org.json.JSONObject().put("url", it.url).put("server", it.server).put("category", it.category).put("label", it.label)) }
+                }.toString()
+                withContext(Dispatchers.Main) {
+                    addedExternalSubConfigs.clear(); addedExternalSubLabels.clear()
+                    player?.release(); player = null
+                    _uiState.update {
+                        it.copy(
+                            isSwitchingEpisode = false, isStreamingMode = true, isMagnet = false, torrentHash = null,
+                            episodeTitle = "Episode 1", seasonNumber = 1, episodeNumber = 1,
+                            animeOrigin = w.origin, animeTracksJson = tracksJson, animeEmbedsJson = embedsJson,
+                            animeServer = winningEmbed?.server, animeEmbedUrl = winningEmbed?.url,
+                        )
+                    }
+                    createStreamingPlayer(w.url, w.referer, animeTracksJson = tracksJson, animeOrigin = w.origin)
+                }
+                maybeLoadSuggestions()
+            } catch (e: Exception) {
+                Log.e(TAG, "playAnimeItem failed", e)
+                _uiState.update { it.copy(isSwitchingEpisode = false, isConnecting = false, error = e.message ?: "Couldn't play \"$title\"") }
             }
         }
     }

@@ -48,6 +48,7 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import androidx.tv.material3.*
 import coil.compose.AsyncImage
+import com.playtorrio.tv.data.playback.PlaybackQueue
 import kotlinx.coroutines.delay
 import java.util.Date
 import java.util.concurrent.TimeUnit
@@ -2860,7 +2861,7 @@ private fun UpNextOverlay(state: PlayerUiState, viewModel: PlayerViewModel) {
     val sug = state.upNextSuggestion
     val useEpisode = !state.isMovie && ep != null
 
-    val thumb: String? = if (useEpisode) (ep?.stillUrl ?: state.backdropUrl) else sug?.posterUrl
+    val thumb: String? = if (useEpisode) (ep?.stillUrl ?: state.backdropUrl) else sug?.thumbnailUrl
     val label = if (useEpisode) "NEXT EPISODE" else "UP NEXT"
     val mainTitle = if (useEpisode) {
         (ep?.name?.takeIf { it.isNotBlank() } ?: "Episode ${ep?.episodeNumber}")
@@ -3037,11 +3038,20 @@ private fun SuggestionsPanel(state: PlayerUiState, viewModel: PlayerViewModel) {
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun SuggestionCard(
-    item: SuggestionItem,
+    item: PlaybackQueue.Item,
     focusRequester: FocusRequester?,
     onClick: () -> Unit
 ) {
     var isFocused by remember { mutableStateOf(false) }
+    // Torrent results carry no thumbnail from the source — resolve a best-effort
+    // TMDB poster by name (same lookup the torrent search rows use).
+    val poster by produceState(item.thumbnailUrl, item.identity) {
+        if (item.thumbnailUrl == null && item.kind == PlaybackQueue.Kind.TORRENT) {
+            value = runCatching {
+                com.playtorrio.tv.data.torrent.TorrentSearchService.posterFor(item.title)
+            }.getOrNull()
+        }
+    }
     Card(
         onClick = onClick,
         modifier = Modifier
@@ -3060,7 +3070,7 @@ private fun SuggestionCard(
     ) {
         Column {
             AsyncImage(
-                model = item.posterUrl,
+                model = poster,
                 contentDescription = item.title,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
