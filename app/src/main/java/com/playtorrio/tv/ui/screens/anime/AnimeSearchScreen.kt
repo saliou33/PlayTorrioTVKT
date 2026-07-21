@@ -44,7 +44,7 @@ fun AnimeSearchScreen(
     // Query lives in the shared VM so back-returning to this screen restores
     // the text + results instead of wiping them.
     val initialQuery = remember { vm.searchQuery.value }
-    var query   by remember { mutableStateOf(initialQuery) }
+    var query   by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(initialQuery) }
     var firstRun by remember { mutableStateOf(true) }
     val results by vm.searchResults.collectAsState()
     val loading by vm.searchLoading.collectAsState()

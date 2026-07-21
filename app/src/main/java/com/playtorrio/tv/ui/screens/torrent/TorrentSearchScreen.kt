@@ -72,8 +72,11 @@ fun TorrentSearchScreen(navController: NavController) {
     // query/category/results instantly instead of refetching.
     val cache = com.playtorrio.tv.ui.ScreenStateCache.TorrentSearch
     val restoring = cache.results.isNotEmpty()
-    var query by remember { mutableStateOf(if (restoring) cache.query else "") }
-    var category by remember {
+    // rememberSaveable: query/category also survive activity/process recreation.
+    var query by androidx.compose.runtime.saveable.rememberSaveable {
+        mutableStateOf(if (restoring) cache.query else "")
+    }
+    var category by androidx.compose.runtime.saveable.rememberSaveable {
         mutableStateOf(
             if (restoring) TorrentCategory.entries.firstOrNull { it.name == cache.categoryName } ?: TorrentCategory.ALL
             else TorrentCategory.ALL

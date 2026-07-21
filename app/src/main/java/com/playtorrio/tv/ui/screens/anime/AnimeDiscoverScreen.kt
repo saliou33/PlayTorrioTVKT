@@ -54,16 +54,17 @@ fun AnimeDiscoverScreen(navController: NavController, initialGenre: String? = nu
     // filter, results, pagination and scroll instantly instead of refetching.
     val cache = com.playtorrio.tv.ui.ScreenStateCache.AnimeDiscover
     val restoring = initialGenre == null && cache.results.isNotEmpty()
-    var genre by remember {
+    // Filters live in rememberSaveable so they also survive activity/process
+    // recreation (low-RAM TVs kill the main activity behind the player).
+    var genre by androidx.compose.runtime.saveable.rememberSaveable {
         mutableStateOf(
             initialGenre?.takeIf { it in genres } ?: (if (restoring) cache.genre ?: "All" else "All")
         )
     }
-    var sort by remember {
-        mutableStateOf(
-            if (restoring) SORTS.firstOrNull { it.first == cache.sortLabel } ?: SORTS.first() else SORTS.first()
-        )
+    var sortLabel by androidx.compose.runtime.saveable.rememberSaveable {
+        mutableStateOf(if (restoring) cache.sortLabel ?: SORTS.first().first else SORTS.first().first)
     }
+    val sort = SORTS.firstOrNull { it.first == sortLabel } ?: SORTS.first()
     var results by remember {
         mutableStateOf(if (restoring) cache.results else emptyList<AnimeCardModel>())
     }
@@ -156,7 +157,7 @@ fun AnimeDiscoverScreen(navController: NavController, initialGenre: String? = nu
         Spacer(Modifier.height(10.dp))
         // Sort chips
         LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            items(SORTS) { s -> Chip(s.first, s == sort) { sort = s } }
+            items(SORTS) { s -> Chip(s.first, s == sort) { sortLabel = s.first } }
         }
         Spacer(Modifier.height(16.dp))
 

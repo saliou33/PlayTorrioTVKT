@@ -23,7 +23,12 @@ data class StremioCatalogUiState(
     val hasMore: Boolean = true
 )
 
-class StremioCatalogViewModel : ViewModel() {
+class StremioCatalogViewModel(
+    /** Survives activity/process recreation (low-RAM TVs kill the main activity
+     *  while PlayerActivity is foreground) — used to restore the selected
+     *  catalog + genre filters when the in-memory VM didn't survive. */
+    private val saved: androidx.lifecycle.SavedStateHandle,
+) : ViewModel() {
 
     private val _uiState = MutableStateFlow(StremioCatalogUiState())
     val uiState: StateFlow<StremioCatalogUiState> = _uiState
@@ -72,23 +77,37 @@ class StremioCatalogViewModel : ViewModel() {
             if (it >= 0) it else 0
         }
 
+        // If a previous VM instance for this exact route saved its selection into
+        // the state bundle (activity/process recreated underneath us), restore
+        // the catalog tab + extra filters instead of resetting to defaults.
+        val savedRoute: String? = saved["route"]
+        val savedIdx: Int? = saved["sel_idx"]
+        @Suppress("UNCHECKED_CAST")
+        val savedExtras = saved.get<java.io.Serializable>("extras") as? HashMap<String, String>
+        saved["route"] = routeKey
+        val restoreIdx = if (savedRoute == routeKey && savedIdx != null && savedIdx in currentCatalogs.indices)
+            savedIdx else initialIndex
+        val restoreExtras = if (savedRoute == routeKey) savedExtras else null
+
         _uiState.value = StremioCatalogUiState(
             isLoading = true,
             addonName = addon.manifest.name,
             catalogs = currentCatalogs,
-            selectedCatalogIndex = initialIndex
+            selectedCatalogIndex = restoreIdx
         )
 
-        selectCatalog(initialIndex)
+        selectCatalog(restoreIdx, restoreExtras)
     }
 
-    fun selectCatalog(index: Int) {
+    fun selectCatalog(index: Int, restoreExtras: Map<String, String>? = null) {
         val addon = currentAddon ?: return
         val catalog = currentCatalogs.getOrNull(index) ?: return
 
         currentType = catalog.type
         currentCatalogId = catalog.id
-        currentExtras = buildDefaultExtras(catalog)
+        currentExtras = restoreExtras ?: buildDefaultExtras(catalog)
+        saved["sel_idx"] = index
+        saved["extras"] = HashMap(currentExtras)
 
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(
@@ -123,6 +142,7 @@ class StremioCatalogViewModel : ViewModel() {
         val mutable = currentExtras.toMutableMap()
         if (value.isNullOrBlank()) mutable.remove(name) else mutable[name] = value
         currentExtras = mutable
+        saved["extras"] = HashMap(currentExtras)
 
         viewModelScope.launch {
             _uiState.value = state.copy(

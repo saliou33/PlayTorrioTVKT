@@ -72,11 +72,19 @@ fun LiveTvScreen(navController: NavController) {
 
     // Restore the last tab + search on back-return (channel data itself comes
     // from LiveTvService's in-memory cache, so reloading it is instant).
+    // rememberSaveable also survives activity/process recreation on low-RAM TVs.
     val uiCache = com.playtorrio.tv.ui.ScreenStateCache.LiveTv
-    var tab by remember { mutableStateOf(tabs.firstOrNull { it.key == uiCache.tabKey } ?: tabs.first()) }
+    var savedTabKey by androidx.compose.runtime.saveable.rememberSaveable {
+        mutableStateOf(uiCache.tabKey ?: "")
+    }
+    var tab by remember {
+        mutableStateOf(
+            tabs.firstOrNull { it.key == savedTabKey.ifBlank { uiCache.tabKey } } ?: tabs.first()
+        )
+    }
     var channels by remember { mutableStateOf<List<Channel>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
-    var query by remember { mutableStateOf(uiCache.query) }
+    var query by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(uiCache.query) }
     var aliveOnly by remember { mutableStateOf(AppPreferences.liveTvAliveOnly) }
     var deadUrls by remember { mutableStateOf(AppPreferences.deadChannelUrls) }
     var checking by remember { mutableStateOf(false) }
@@ -84,6 +92,7 @@ fun LiveTvScreen(navController: NavController) {
 
     LaunchedEffect(tab) {
         uiCache.tabKey = tab.key
+        savedTabKey = tab.key
         loading = true
         channels = if (tab.url != null) LiveTvService.fetchM3u(tab.key, tab.url!!)
         else LiveTvService.channels(tab.key.removePrefix("cat:"))
