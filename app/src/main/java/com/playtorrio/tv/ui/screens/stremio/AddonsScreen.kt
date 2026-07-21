@@ -61,10 +61,38 @@ fun AddonsScreen(navController: NavController) {
     Column(
         modifier = Modifier.fillMaxSize().background(Bg).padding(horizontal = 40.dp, vertical = 28.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Column(Modifier.weight(1f)) {
                 Text("Addons", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
                 Text("Add, remove and browse your Stremio addons", color = Color.White.copy(0.5f), fontSize = 13.sp)
+            }
+            // Addons+ → the community addon directory (stremio-addons.net).
+            // Installed silently on demand; never listed as a removable addon.
+            PillButton(
+                text = "Addons+",
+                icon = Icons.Filled.Extension,
+                accent = Accent,
+                enabled = true,
+            ) {
+                scope.launch {
+                    var dir = StremioAddonRepository.getAddons()
+                        .firstOrNull { !it.manifest.addonCatalogs.isNullOrEmpty() }
+                    if (dir == null) {
+                        dir = StremioAddonRepository
+                            .installAddon("https://stremio-addons.net/api/manifest.json")
+                            .getOrNull()
+                        refresh()
+                    }
+                    val cat = dir?.manifest?.addonCatalogs?.firstOrNull()
+                    if (dir != null && cat != null) {
+                        navController.navigate(
+                            "addon_directory/${Uri.encode(dir.manifest.id)}/${Uri.encode(cat.type)}/" +
+                                "${Uri.encode(cat.id)}/${Uri.encode("Addons+")}"
+                        )
+                    } else {
+                        Toast.makeText(context, "Addon directory unavailable right now", Toast.LENGTH_SHORT).show()
+                    }
+                }
             }
             PillButton(
                 text = if (installing) "Adding…" else "Add recommended",
@@ -132,7 +160,10 @@ fun AddonsScreen(navController: NavController) {
         Text("Suggested addons", color = Color.White.copy(0.7f), fontSize = 13.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(8.dp))
         LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            items(StremioAddonRepository.RECOMMENDED_ADDONS) { rec ->
+            // The directory addon lives behind the Addons+ button, not here.
+            items(StremioAddonRepository.RECOMMENDED_ADDONS.filter {
+                !it.manifestUrl.contains("stremio-addons.net")
+            }) { rec ->
                 var focused by remember { mutableStateOf(false) }
                 Column(
                     modifier = Modifier
@@ -164,14 +195,19 @@ fun AddonsScreen(navController: NavController) {
 
         Spacer(Modifier.height(20.dp))
 
-        if (addons.isEmpty()) {
+        // Directory-only addons (addon_catalog resource, no content catalogs) are
+        // special — reached via the Addons+ button, never listed as removable.
+        val listedAddons = addons.filter {
+            it.manifest.addonCatalogs.isNullOrEmpty() || it.manifest.catalogs.isNotEmpty()
+        }
+        if (listedAddons.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text("No addons yet. Tap “Add recommended” to install Torrentio & more.",
                     color = Color.White.copy(0.5f), fontSize = 14.sp)
             }
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(22.dp)) {
-                items(addons) { addon ->
+                items(listedAddons) { addon ->
                     AddonSection(
                         addon = addon,
                         onCatalog = { type, catalogId, title ->
