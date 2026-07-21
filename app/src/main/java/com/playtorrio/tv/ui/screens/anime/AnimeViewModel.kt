@@ -66,25 +66,36 @@ class AnimeViewModel : ViewModel() {
     val likedIds        = MutableStateFlow<Set<Int>>(emptySet())
     private var prefs: SharedPreferences? = null
 
+    /** True once loadHome() has been launched at least once. isLoading can't be
+     *  used for this — it STARTS true, which deadlocked the old guard (loadHome
+     *  never ran and the page spun forever). */
+    private var homeLoadLaunched = false
+
     fun init(context: Context) {
         prefs = context.getSharedPreferences("anime_prefs_v1", Context.MODE_PRIVATE)
         loadLiked()
-        // Only fetch home rails when we don't already have them — the VM survives
-        // back-navigation, so returning to the Anime screen is instant instead of
-        // re-downloading all rails.
-        if (spotlight.value.isEmpty() && trending.value.isEmpty() && !isLoading.value) {
-            loadHome()
-        } else {
-            // Keep the mature rail in sync with the 18+ setting without a full reload.
-            val adult = com.playtorrio.tv.data.AppPreferences.showAdultContent
-            if (adult && hentai.value.isEmpty()) {
-                viewModelScope.launch {
-                    hentai.value = runCatching {
-                        AnimeService.browse(genre = "Hentai", sort = "POPULARITY_DESC", perPage = 20)
-                    }.getOrDefault(emptyList())
+        val hasData = spotlight.value.isNotEmpty() || trending.value.isNotEmpty()
+        when {
+            // First entry, or a previous attempt failed and finished: (re)load.
+            !hasData && (!homeLoadLaunched || !isLoading.value) -> {
+                homeLoadLaunched = true
+                loadHome()
+            }
+            // Load in flight — let it finish.
+            !hasData -> {}
+            // Data already present (back-return): just keep the mature rail in
+            // sync with the 18+ setting without a full reload.
+            else -> {
+                val adult = com.playtorrio.tv.data.AppPreferences.showAdultContent
+                if (adult && hentai.value.isEmpty()) {
+                    viewModelScope.launch {
+                        hentai.value = runCatching {
+                            AnimeService.browse(genre = "Hentai", sort = "POPULARITY_DESC", perPage = 20)
+                        }.getOrDefault(emptyList())
+                    }
+                } else if (!adult && hentai.value.isNotEmpty()) {
+                    hentai.value = emptyList()
                 }
-            } else if (!adult && hentai.value.isNotEmpty()) {
-                hentai.value = emptyList()
             }
         }
     }
