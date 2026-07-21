@@ -33,8 +33,17 @@ class StremioCatalogViewModel : ViewModel() {
     private var currentCatalogId: String = ""
     private var currentCatalogs: List<CatalogDeclaration> = emptyList()
     private var currentExtras: Map<String, String> = emptyMap()
+    private var loadedRouteKey: String? = null
 
     fun load(addonId: String, type: String, catalogId: String) {
+        // The screen's LaunchedEffect re-runs on every back-return (the
+        // composable re-enters composition), but this VM survives on the back
+        // stack. Reloading here would wipe the user's selected catalog + genre
+        // filters and refetch — skip when we already hold this route's data.
+        val routeKey = "$addonId|$type|$catalogId"
+        if (routeKey == loadedRouteKey && _uiState.value.items.isNotEmpty()) return
+        loadedRouteKey = routeKey
+
         val addon = StremioAddonRepository.getAddons().firstOrNull { it.manifest.id == addonId }
             ?: run {
                 _uiState.value = StremioCatalogUiState(

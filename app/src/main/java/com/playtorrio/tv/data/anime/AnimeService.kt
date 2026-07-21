@@ -61,6 +61,9 @@ object AnimeService {
                     requestMethod = "POST"
                     setRequestProperty("Content-Type", "application/json")
                     setRequestProperty("Accept", "application/json")
+                    // AniList sits behind Cloudflare, which 403s unfamiliar client
+                    // signatures — send a browser UA like the rest of the app does.
+                    setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36")
                     connectTimeout = 15_000
                     readTimeout = 15_000
                     doOutput = true
@@ -145,6 +148,71 @@ object AnimeService {
         """
         val data = query(q, mapOf("page" to page, "perPage" to perPage))
         return parseMediaArray(data.getJSONObject("Page").getJSONArray("media"))
+    }
+
+    // ── Combined home rails ───────────────────────────────────────────────────
+
+    data class HomeRails(
+        val spotlight: List<AnimeCard> = emptyList(),
+        val trending: List<AnimeCard> = emptyList(),
+        val topAiring: List<AnimeCard> = emptyList(),
+        val mostPopular: List<AnimeCard> = emptyList(),
+        val topRated: List<AnimeCard> = emptyList(),
+        val latestDone: List<AnimeCard> = emptyList(),
+        val recentEps: List<AnimeCard> = emptyList(),
+        val hentai: List<AnimeCard> = emptyList(),
+    )
+
+    @Volatile
+    private var homeRailsCache: Triple<Long, Boolean, HomeRails>? = null
+    private const val HOME_RAILS_TTL_MS = 15 * 60_000L
+
+    /**
+     * Fetches ALL home rails as ONE aliased GraphQL request instead of 9
+     * parallel ones. The parallel burst tripped AniList's rate limit, and each
+     * rail then slept through long Retry-After backoffs — the anime page spun
+     * "loading" for minutes. Cached ~15 min so back-navigation is instant.
+     */
+    suspend fun getHomeRails(includeAdult: Boolean, force: Boolean = false): HomeRails {
+        homeRailsCache?.let { (at, adult, rails) ->
+            if (!force && adult == includeAdult &&
+                System.currentTimeMillis() - at < HOME_RAILS_TTL_MS
+            ) return rails
+        }
+        val adultAlias = if (includeAdult) {
+            """hentai: Page(page: 1, perPage: 20) { media(type: ANIME, sort: [POPULARITY_DESC], isAdult: true, genre_in: ["Hentai"]) { ...mf } }"""
+        } else ""
+        val q = """
+            query {
+              spotlight: Page(page: 1, perPage: 10) { media(type: ANIME, sort: [TRENDING_DESC], isAdult: false, status_in: [RELEASING, FINISHED]) { ...mf } }
+              trending: Page(page: 1, perPage: 20) { media(type: ANIME, sort: [TRENDING_DESC], isAdult: false) { ...mf } }
+              topAiring: Page(page: 1, perPage: 20) { media(type: ANIME, sort: [POPULARITY_DESC], isAdult: false, status: RELEASING) { ...mf } }
+              mostPopular: Page(page: 1, perPage: 20) { media(type: ANIME, sort: [POPULARITY_DESC], isAdult: false) { ...mf } }
+              topRated: Page(page: 1, perPage: 20) { media(type: ANIME, sort: [SCORE_DESC], isAdult: false) { ...mf } }
+              latestDone: Page(page: 1, perPage: 20) { media(type: ANIME, sort: [END_DATE_DESC], isAdult: false, status: FINISHED) { ...mf } }
+              recentEps: Page(page: 1, perPage: 20) { media(type: ANIME, sort: [UPDATED_AT_DESC], isAdult: false, status: RELEASING) { ...mf } }
+              $adultAlias
+            }
+            fragment mf on Media { $MEDIA_FIELDS }
+        """
+        val data = query(q)
+        fun rail(name: String): List<AnimeCard> = runCatching {
+            parseMediaArray(data.getJSONObject(name).getJSONArray("media"))
+        }.getOrDefault(emptyList())
+        val rails = HomeRails(
+            spotlight = rail("spotlight"),
+            trending = rail("trending"),
+            topAiring = rail("topAiring"),
+            mostPopular = rail("mostPopular"),
+            topRated = rail("topRated"),
+            latestDone = rail("latestDone"),
+            recentEps = rail("recentEps"),
+            hentai = if (includeAdult) rail("hentai") else emptyList(),
+        )
+        if (rails.trending.isNotEmpty() || rails.mostPopular.isNotEmpty()) {
+            homeRailsCache = Triple(System.currentTimeMillis(), includeAdult, rails)
+        }
+        return rails
     }
 
     // ── Public list APIs ──────────────────────────────────────────────────────

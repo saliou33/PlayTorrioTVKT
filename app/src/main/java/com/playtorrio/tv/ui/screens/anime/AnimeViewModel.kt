@@ -95,28 +95,24 @@ class AnimeViewModel : ViewModel() {
             isLoading.value = true
             homeError.value = null
             try {
-                val sp = async { runCatching { AnimeService.getSpotlight(10) }.getOrDefault(emptyList()) }
-                val t10 = async { runCatching { AnimeService.getTop10Today(10) }.getOrDefault(emptyList()) }
-                val tr = async { runCatching { AnimeService.getTrending(20) }.getOrDefault(emptyList()) }
-                val ta = async { runCatching { AnimeService.getTopAiring(20) }.getOrDefault(emptyList()) }
-                val mp = async { runCatching { AnimeService.getMostPopular(20) }.getOrDefault(emptyList()) }
-                val rt = async { runCatching { AnimeService.getTopRated(20) }.getOrDefault(emptyList()) }
-                val lc = async { runCatching { AnimeService.getLatestCompleted(20) }.getOrDefault(emptyList()) }
-                val re = async { runCatching { AnimeService.getRecentEpisodes(20) }.getOrDefault(emptyList()) }
-                val he = async {
-                    if (com.playtorrio.tv.data.AppPreferences.showAdultContent)
-                        runCatching { AnimeService.browse(genre = "Hentai", sort = "POPULARITY_DESC", perPage = 20) }.getOrDefault(emptyList())
-                    else emptyList()
+                // One aliased GraphQL request for every rail — the old 9-request
+                // parallel burst tripped AniList's rate limit and left the page
+                // spinning through minutes of Retry-After backoff.
+                val rails = AnimeService.getHomeRails(
+                    includeAdult = com.playtorrio.tv.data.AppPreferences.showAdultContent
+                )
+                spotlight.value   = rails.spotlight
+                top10.value       = rails.trending.take(10)
+                trending.value    = rails.trending
+                topAiring.value   = rails.topAiring
+                mostPopular.value = rails.mostPopular
+                topRated.value    = rails.topRated
+                latestDone.value  = rails.latestDone
+                recentEps.value   = rails.recentEps
+                hentai.value      = rails.hentai
+                if (rails.trending.isEmpty() && rails.mostPopular.isEmpty()) {
+                    homeError.value = "AniList is unavailable right now — press Back and retry in a moment"
                 }
-                spotlight.value   = sp.await()
-                top10.value       = t10.await()
-                trending.value    = tr.await()
-                topAiring.value   = ta.await()
-                mostPopular.value = mp.await()
-                topRated.value    = rt.await()
-                latestDone.value  = lc.await()
-                recentEps.value   = re.await()
-                hentai.value      = he.await()
             } catch (e: Exception) {
                 homeError.value = e.message
             } finally {
