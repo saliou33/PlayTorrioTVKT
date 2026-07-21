@@ -130,14 +130,28 @@ object TorrentSearchService {
 
     /** Popular torrents for the landing page (per category). Uses apibay's
      *  precompiled top-100 file (reliable) or Nyaa for anime. */
+    // Popular lists cached ~10 min per category so revisits are instant.
+    private val popularCache = HashMap<String, Pair<Long, List<TorrentResult>>>()
+    private const val POPULAR_TTL_MS = 10 * 60_000L
+
     suspend fun popular(cat: TorrentCategory): List<TorrentResult> = withContext(Dispatchers.IO) {
-        if (cat.nyaaOnly) {
-            return@withContext runCatching { searchNyaa("1080p") }.getOrDefault(emptyList())
+        synchronized(popularCache) {
+            popularCache[cat.name]?.let { (at, list) ->
+                if (System.currentTimeMillis() - at < POPULAR_TTL_MS && list.isNotEmpty()) return@withContext list
+            }
+        }
+        val list = if (cat.nyaaOnly) {
+            runCatching { searchNyaa("1080p") }.getOrDefault(emptyList())
+                .sortedByDescending { it.seeders }.take(60)
+        } else {
+            val url = "https://apibay.org/precompiled/data_top100_${cat.topCode}.json"
+            runCatching { parseApibay(fetch(url)) }.getOrDefault(emptyList())
                 .sortedByDescending { it.seeders }.take(60)
         }
-        val url = "https://apibay.org/precompiled/data_top100_${cat.topCode}.json"
-        runCatching { parseApibay(fetch(url)) }.getOrDefault(emptyList())
-            .sortedByDescending { it.seeders }.take(60)
+        if (list.isNotEmpty()) synchronized(popularCache) {
+            popularCache[cat.name] = System.currentTimeMillis() to list
+        }
+        list
     }
 
     // ── Poster matching (best-effort) ──────────────────────────────────────

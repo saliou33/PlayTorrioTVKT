@@ -241,6 +241,28 @@ object StremioService {
         null
     }
 
+    // ── Addon catalogs (directories of other addons) ──────────────────────────
+
+    private data class AddonCatalogResponse(val addons: List<AddonCatalogEntry>? = null)
+
+    /** Fetch the list of installable addons an addon_catalog-type addon exposes
+     *  (e.g. the stremio-addons.net community directory). */
+    suspend fun getAddonCatalog(
+        addon: InstalledAddon,
+        type: String,
+        id: String,
+    ): List<AddonCatalogEntry> = withContext(Dispatchers.IO) {
+        runCatching {
+            val encodedType = encodePathSegment(type)
+            val encodedId = encodePathSegment(id)
+            val url = "${addon.transportUrl}/addon_catalog/$encodedType/$encodedId.json"
+            val body = get(url) ?: return@withContext emptyList()
+            gson.fromJson(body, AddonCatalogResponse::class.java)?.addons
+                ?.filter { it.transportUrl.isNotBlank() && it.manifest.id.isNotBlank() }
+                ?: emptyList()
+        }.getOrDefault(emptyList())
+    }
+
     // ── Streams ───────────────────────────────────────────────────────────────
 
     /**

@@ -20,7 +20,7 @@ object StremioAddonRepository {
 
     private const val PREFS_BASE = "stremio_prefs"
     private const val KEY_ADDONS = "installed_addons"
-    private const val KEY_DEFAULTS_SEEDED = "defaults_seeded_v2"
+    private const val KEY_DEFAULTS_SEEDED = "defaults_seeded_v3"
     private const val TAG = "StremioAddonRepo"
 
     data class RecommendedAddon(
@@ -55,6 +55,16 @@ object StremioAddonRepository {
             "OpenSubtitles v3",
             "Subtitles for almost everything, many languages",
             "https://opensubtitles-v3.strem.io/manifest.json",
+        ),
+        RecommendedAddon(
+            "NoTorrent",
+            "Netflix, Disney+, Prime, Apple TV+, Max, Paramount+, Crunchyroll catalogs + streams",
+            "https://addon.notorrent2.workers.dev/manifest.json",
+        ),
+        RecommendedAddon(
+            "stremio-addons.net",
+            "Community addon directory — browse & install 500+ addons from inside the app",
+            "https://stremio-addons.net/api/manifest.json",
         ),
     )
 
@@ -118,18 +128,28 @@ object StremioAddonRepository {
                 val fetchUrl = "$transportUrl/manifest.json"
 
                 val req = Request.Builder().url(fetchUrl).build()
-                val body = http.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) {
-                        return@withContext Result.failure(
-                            Exception("HTTP ${resp.code}: ${resp.message}")
-                        )
+                val body = try {
+                    http.newCall(req).execute().use { resp ->
+                        if (!resp.isSuccessful) {
+                            return@withContext Result.failure(
+                                Exception("Addon server replied HTTP ${resp.code} — it may be down or moved")
+                            )
+                        }
+                        resp.body?.string()?.takeIf { it.isNotBlank() }
+                            ?: return@withContext Result.failure(
+                                Exception("Addon server returned an empty response — it looks dead")
+                            )
                     }
-                    resp.body?.string()
-                        ?: return@withContext Result.failure(Exception("Empty response"))
+                } catch (e: java.io.IOException) {
+                    return@withContext Result.failure(
+                        Exception("Can't reach the addon server (${e.message ?: "network error"}) — it may be offline")
+                    )
                 }
 
-                val manifest = gson.fromJson(body, AddonManifest::class.java)
-                    ?: return@withContext Result.failure(Exception("Failed to parse manifest"))
+                val manifest = try {
+                    gson.fromJson(body, AddonManifest::class.java)
+                } catch (_: Exception) { null }
+                    ?: return@withContext Result.failure(Exception("That URL doesn't serve a valid Stremio manifest"))
 
                 if (manifest.id.isBlank()) {
                     return@withContext Result.failure(Exception("Invalid manifest: missing id"))

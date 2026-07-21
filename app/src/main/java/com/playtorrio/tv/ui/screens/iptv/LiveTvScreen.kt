@@ -70,21 +70,26 @@ fun LiveTvScreen(navController: NavController) {
         }
     }
 
-    var tab by remember { mutableStateOf(tabs.first()) }
+    // Restore the last tab + search on back-return (channel data itself comes
+    // from LiveTvService's in-memory cache, so reloading it is instant).
+    val uiCache = com.playtorrio.tv.ui.ScreenStateCache.LiveTv
+    var tab by remember { mutableStateOf(tabs.firstOrNull { it.key == uiCache.tabKey } ?: tabs.first()) }
     var channels by remember { mutableStateOf<List<Channel>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
-    var query by remember { mutableStateOf("") }
+    var query by remember { mutableStateOf(uiCache.query) }
     var aliveOnly by remember { mutableStateOf(AppPreferences.liveTvAliveOnly) }
     var deadUrls by remember { mutableStateOf(AppPreferences.deadChannelUrls) }
     var checking by remember { mutableStateOf(false) }
     var addUrl by remember { mutableStateOf("") }
 
     LaunchedEffect(tab) {
+        uiCache.tabKey = tab.key
         loading = true
         channels = if (tab.url != null) LiveTvService.fetchM3u(tab.key, tab.url!!)
         else LiveTvService.channels(tab.key.removePrefix("cat:"))
         loading = false
     }
+    LaunchedEffect(query) { uiCache.query = query }
 
     val shown = remember(channels, query, aliveOnly, deadUrls) {
         channels

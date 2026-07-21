@@ -26,6 +26,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
@@ -51,6 +52,9 @@ fun AddonsScreen(navController: NavController) {
     var addons by remember { mutableStateOf(StremioAddonRepository.getAddons()) }
     var installing by remember { mutableStateOf(false) }
     var urlInput by remember { mutableStateOf("") }
+    var configureQrUrl by remember { mutableStateOf<String?>(null) }
+
+    androidx.activity.compose.BackHandler(enabled = configureQrUrl != null) { configureQrUrl = null }
 
     fun refresh() { addons = StremioAddonRepository.getAddons() }
 
@@ -106,8 +110,9 @@ fun AddonsScreen(navController: NavController) {
                                     val r = StremioAddonRepository.installAddon(u)
                                     refresh()
                                     Toast.makeText(context,
-                                        if (r.isSuccess) "Addon added" else "Couldn't add — check the manifest URL",
-                                        Toast.LENGTH_SHORT).show()
+                                        if (r.isSuccess) "Addon added"
+                                        else (r.exceptionOrNull()?.message ?: "Couldn't add — check the manifest URL"),
+                                        Toast.LENGTH_LONG).show()
                                     if (r.isSuccess) urlInput = ""
                                 }
                             }
@@ -175,6 +180,13 @@ fun AddonsScreen(navController: NavController) {
                                     "${Uri.encode(catalogId)}/${Uri.encode(title)}"
                             )
                         },
+                        onAddonDirectory = { type, catalogId, title ->
+                            navController.navigate(
+                                "addon_directory/${Uri.encode(addon.manifest.id)}/${Uri.encode(type)}/" +
+                                    "${Uri.encode(catalogId)}/${Uri.encode(title)}"
+                            )
+                        },
+                        onConfigure = { configureQrUrl = "${addon.transportUrl}/configure" },
                         onRemove = {
                             scope.launch {
                                 StremioAddonRepository.removeAddon(addon.manifest.id)
@@ -187,12 +199,58 @@ fun AddonsScreen(navController: NavController) {
             }
         }
     }
+
+    // ── Configure-on-phone QR dialog ─────────────────────────────────────────
+    configureQrUrl?.let { url ->
+        val qr = remember(url) {
+            runCatching { com.playtorrio.tv.server.QrCodeGenerator.generate(url, 400) }.getOrNull()
+        }
+        Box(
+            Modifier.fillMaxSize().background(Color.Black.copy(0.85f))
+                .clickable { configureQrUrl = null },
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Color(0xFF0F0F1F))
+                    .border(1.dp, Color.White.copy(0.12f), RoundedCornerShape(18.dp))
+                    .padding(28.dp)
+            ) {
+                Text("SET UP ON YOUR PHONE", color = Accent, fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "This addon needs configuration. Scan to open its setup page,\nthen paste the manifest URL it gives you into the field above.",
+                    color = Color.White.copy(0.6f), fontSize = 12.sp,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+                Spacer(Modifier.height(16.dp))
+                if (qr != null) {
+                    androidx.compose.foundation.Image(
+                        bitmap = qr.asImageBitmap(),
+                        contentDescription = "Configure QR",
+                        modifier = Modifier.size(200.dp).clip(RoundedCornerShape(10.dp))
+                    )
+                } else {
+                    Text(url, color = Accent, fontSize = 12.sp)
+                }
+                Spacer(Modifier.height(12.dp))
+                Text(url, color = Color.White.copy(0.4f), fontSize = 10.sp, maxLines = 1)
+                Spacer(Modifier.height(10.dp))
+                Text("Press Back to close", color = Color.White.copy(0.35f), fontSize = 11.sp)
+            }
+        }
+    }
 }
 
 @Composable
 private fun AddonSection(
     addon: InstalledAddon,
     onCatalog: (type: String, id: String, title: String) -> Unit,
+    onAddonDirectory: (type: String, id: String, title: String) -> Unit,
+    onConfigure: () -> Unit,
     onRemove: () -> Unit,
 ) {
     Column {
@@ -204,9 +262,58 @@ private fun AddonSection(
             PillButton(text = "Remove", icon = Icons.Filled.Delete, accent = DangerRed, enabled = true, onClick = onRemove)
         }
         Spacer(Modifier.height(10.dp))
+
+        // Addon directories (catalogs of OTHER addons, e.g. stremio-addons.net).
+        val addonCats = addon.manifest.addonCatalogs.orEmpty()
+        if (addonCats.isNotEmpty()) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                items(addonCats) { cat ->
+                    var focused by remember { mutableStateOf(false) }
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (focused) Accent.copy(0.3f) else Accent.copy(0.12f))
+                            .border(if (focused) 2.dp else 1.dp, if (focused) Accent else Accent.copy(0.4f), RoundedCornerShape(10.dp))
+                            .onFocusChanged { focused = it.isFocused }
+                            .clickable {
+                                onAddonDirectory(cat.type, cat.id, "${addon.manifest.name} · ${cat.name.ifBlank { cat.id }}")
+                            }
+                            .padding(horizontal = 16.dp, vertical = 12.dp)
+                    ) {
+                        Text("Browse addons · ${cat.name.ifBlank { cat.id }}",
+                            color = if (focused) Color.White else Accent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+
         val catalogs = addon.manifest.catalogs
-        if (catalogs.isEmpty()) {
-            Text("Streams only — no browsable catalogs.", color = Color.White.copy(0.4f), fontSize = 12.sp)
+        val configurable = addon.manifest.behaviorHints?.configurable == true
+        if (catalogs.isEmpty() && addonCats.isEmpty()) {
+            if (configurable) {
+                // e.g. Comet / MediaFusion / AIOStreams public instances: the base
+                // manifest has no catalogs until configured per-user.
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Needs setup to unlock catalogs/streams.", color = Color.White.copy(0.5f), fontSize = 12.sp)
+                    var focused by remember { mutableStateOf(false) }
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (focused) Accent.copy(0.35f) else Accent.copy(0.15f))
+                            .border(if (focused) 2.dp else 1.dp, if (focused) Accent else Accent.copy(0.5f), RoundedCornerShape(8.dp))
+                            .onFocusChanged { focused = it.isFocused }
+                            .clickable { onConfigure() }
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                    ) {
+                        Text("Set up (QR)", color = Accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            } else {
+                Text("Streams only — no browsable catalogs.", color = Color.White.copy(0.4f), fontSize = 12.sp)
+            }
+        } else if (catalogs.isEmpty()) {
+            // Directory-only addon (handled above) — nothing more to show.
         } else {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 items(catalogs) { cat ->

@@ -22,7 +22,16 @@ data class AddonManifest(
     val idPrefixes: List<String>? = null,
     @SerializedName("behaviorHints")
     val behaviorHints: AddonBehaviorHints? = null,
-    val config: List<ConfigField>? = null
+    val config: List<ConfigField>? = null,
+    /** Catalogs of *other addons* this addon exposes (resource "addon_catalog"),
+     *  e.g. the stremio-addons.net community directory. */
+    val addonCatalogs: List<CatalogDeclaration>? = null,
+)
+
+/** One entry of an addon_catalog response: an installable addon descriptor. */
+data class AddonCatalogEntry(
+    val transportUrl: String = "",
+    val manifest: AddonManifest = AddonManifest(),
 )
 
 data class CatalogDeclaration(

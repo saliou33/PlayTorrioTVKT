@@ -50,19 +50,52 @@ fun AnimeDiscoverScreen(navController: NavController, initialGenre: String? = nu
     val genres = remember {
         if (AppPreferences.showAdultContent) GENRES + "Hentai" else GENRES
     }
-    var genre by remember { mutableStateOf(initialGenre?.takeIf { it in genres } ?: "All") }
-    var sort by remember { mutableStateOf(SORTS.first()) }
-    var results by remember { mutableStateOf<List<AnimeCardModel>>(emptyList()) }
-    var loading by remember { mutableStateOf(true) }
+    // Seed from the back-nav cache so returning from a detail page restores the
+    // filter, results, pagination and scroll instantly instead of refetching.
+    val cache = com.playtorrio.tv.ui.ScreenStateCache.AnimeDiscover
+    val restoring = initialGenre == null && cache.results.isNotEmpty()
+    var genre by remember {
+        mutableStateOf(
+            initialGenre?.takeIf { it in genres } ?: (if (restoring) cache.genre ?: "All" else "All")
+        )
+    }
+    var sort by remember {
+        mutableStateOf(
+            if (restoring) SORTS.firstOrNull { it.first == cache.sortLabel } ?: SORTS.first() else SORTS.first()
+        )
+    }
+    var results by remember {
+        mutableStateOf(if (restoring) cache.results else emptyList<AnimeCardModel>())
+    }
+    var loading by remember { mutableStateOf(!restoring) }
     // Pagination: keep loading more pages as the grid scrolls to its end.
-    val gridState = rememberLazyGridState()
-    var page by remember { mutableIntStateOf(1) }
-    var hasMore by remember { mutableStateOf(true) }
+    val gridState = rememberLazyGridState(
+        initialFirstVisibleItemIndex = if (restoring) cache.firstVisibleIndex else 0
+    )
+    var page by remember { mutableIntStateOf(if (restoring) cache.page else 1) }
+    var hasMore by remember { mutableStateOf(if (restoring) cache.hasMore else true) }
     var loadingMore by remember { mutableStateOf(false) }
     val perPage = 40
 
-    // Reset + first page whenever the filter changes.
+    // Write-through to the cache so the next back-return restores this state.
+    LaunchedEffect(results, page, hasMore, genre, sort) {
+        cache.genre = genre
+        cache.sortLabel = sort.first
+        cache.results = results
+        cache.page = page
+        cache.hasMore = hasMore
+    }
+    LaunchedEffect(gridState.firstVisibleItemIndex) {
+        cache.firstVisibleIndex = gridState.firstVisibleItemIndex
+    }
+
+    // Reset + first page whenever the filter changes (skipped when we restored
+    // matching cached results). Tracked locally so the cache write-through above
+    // can't mask a genuine filter change.
+    var loadedKey by remember { mutableStateOf(if (restoring) "${genre}|${sort.first}" else "") }
     LaunchedEffect(genre, sort) {
+        val key = "${genre}|${sort.first}"
+        if (key == loadedKey && results.isNotEmpty()) return@LaunchedEffect
         loading = true
         page = 1
         hasMore = true
@@ -77,6 +110,7 @@ fun AnimeDiscoverScreen(navController: NavController, initialGenre: String? = nu
         results = first
         hasMore = first.size >= perPage
         loading = false
+        loadedKey = key
     }
 
     // Load-more when scrolled near the end.

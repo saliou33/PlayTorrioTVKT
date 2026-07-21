@@ -58,6 +58,7 @@ class AnimeViewModel : ViewModel() {
     val autoExtractEmbeds  = MutableStateFlow<List<AnimeEmbed>>(emptyList()) // for in-player switcher
 
     // ── Search ────────────────────────────────────────────────────────────────
+    val searchQuery     = MutableStateFlow("")
     val searchResults   = MutableStateFlow<List<AnimeCard>>(emptyList())
     val searchLoading   = MutableStateFlow(false)
 
@@ -68,7 +69,24 @@ class AnimeViewModel : ViewModel() {
     fun init(context: Context) {
         prefs = context.getSharedPreferences("anime_prefs_v1", Context.MODE_PRIVATE)
         loadLiked()
-        loadHome()
+        // Only fetch home rails when we don't already have them — the VM survives
+        // back-navigation, so returning to the Anime screen is instant instead of
+        // re-downloading all rails.
+        if (spotlight.value.isEmpty() && trending.value.isEmpty() && !isLoading.value) {
+            loadHome()
+        } else {
+            // Keep the mature rail in sync with the 18+ setting without a full reload.
+            val adult = com.playtorrio.tv.data.AppPreferences.showAdultContent
+            if (adult && hentai.value.isEmpty()) {
+                viewModelScope.launch {
+                    hentai.value = runCatching {
+                        AnimeService.browse(genre = "Hentai", sort = "POPULARITY_DESC", perPage = 20)
+                    }.getOrDefault(emptyList())
+                }
+            } else if (!adult && hentai.value.isNotEmpty()) {
+                hentai.value = emptyList()
+            }
+        }
     }
 
     // ── Home ──────────────────────────────────────────────────────────────────

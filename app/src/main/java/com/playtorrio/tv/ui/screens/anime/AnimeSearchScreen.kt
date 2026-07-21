@@ -41,13 +41,22 @@ fun AnimeSearchScreen(
     navController: NavController,
     vm: AnimeViewModel = viewModel(),
 ) {
-    var query   by remember { mutableStateOf("") }
+    // Query lives in the shared VM so back-returning to this screen restores
+    // the text + results instead of wiping them.
+    val initialQuery = remember { vm.searchQuery.value }
+    var query   by remember { mutableStateOf(initialQuery) }
+    var firstRun by remember { mutableStateOf(true) }
     val results by vm.searchResults.collectAsState()
     val loading by vm.searchLoading.collectAsState()
 
-    // Debounce search
+    // Debounce search. On re-entry with an unchanged query + existing results,
+    // skip both the refetch and the clear.
     LaunchedEffect(query) {
+        vm.searchQuery.value = query
+        val isRestore = firstRun && query == initialQuery && vm.searchResults.value.isNotEmpty()
+        firstRun = false
         if (query.length >= 2) {
+            if (isRestore) return@LaunchedEffect
             kotlinx.coroutines.delay(350)
             vm.search(query)
         } else if (query.isEmpty()) {

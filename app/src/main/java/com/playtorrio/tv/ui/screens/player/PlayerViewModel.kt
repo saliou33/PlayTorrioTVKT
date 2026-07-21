@@ -920,12 +920,26 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.update { it.copy(sourceStatus = it.sourceStatus + (idx to status)) }
     }
 
+    /** An exception thrown inside a Player.Listener callback crashes the whole
+     *  app — which the user experiences as the player "randomly exiting" back to
+     *  the detail page. Every listener body goes through this guard. */
+    private inline fun guarded(tag: String, block: () -> Unit) {
+        try { block() } catch (e: Exception) {
+            Log.e(TAG, "Guarded listener crash in $tag (ignored)", e)
+        }
+    }
+
     private fun tryNextSource(reason: String) {
         val state = _uiState.value
 
+        // Addon-origin streams have no TMDB id, so the streaming extractor can
+        // never produce an alternative ("trying Xpass…" forever). Reconnect the
+        // SAME stream instead of cycling extractor sources.
+        val addonOrigin = state.isStreamingMode && state.tmdbId <= 0 && state.animeEmbeds == null && !state.isIptv
+
         // Respect a manual source choice: don't jump to another source. Mark it
         // and keep reconnecting the SAME source (resilient, never gives up).
-        if (!autoAdvanceSources && state.isStreamingMode && state.animeEmbeds == null) {
+        if ((addonOrigin || !autoAdvanceSources) && state.isStreamingMode && state.animeEmbeds == null) {
             setSourceStatus(state.currentSourceIndex, "loading")
             _uiState.update {
                 it.copy(isReconnecting = true, reconnectStatus = "Reconnecting…", error = null)
@@ -1268,7 +1282,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         exo.playWhenReady = true
 
         exo.addListener(object : Player.Listener {
-            override fun onPlaybackStateChanged(state: Int) {
+            override fun onPlaybackStateChanged(state: Int) = guarded("createPlayer.stateChanged") {
                 _uiState.update {
                     it.copy(
                         isBuffering = state == Player.STATE_BUFFERING,
@@ -1293,18 +1307,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 if (state == Player.STATE_ENDED) onVodEnded()
             }
 
-            override fun onIsPlayingChanged(playing: Boolean) {
+            override fun onIsPlayingChanged(playing: Boolean) = guarded("createPlayer.isPlaying") {
                 _uiState.update { it.copy(isPlaying = playing) }
                 if (!playing && exo.playbackState == Player.STATE_READY) {
                     _uiState.update { it.copy(showPauseOverlay = true, showControls = false) }
                 }
             }
 
-            override fun onTracksChanged(tracks: Tracks) {
+            override fun onTracksChanged(tracks: Tracks) = guarded("createPlayer.tracks") {
                 updateTracks()
             }
 
-            override fun onPlayerError(error: PlaybackException) {
+            override fun onPlayerError(error: PlaybackException) = guarded("createPlayer.error") {
                 Log.w(TAG, "Playback error (createPlayer): ${error.errorCodeName}", error)
                 scheduleStreamStartupRetry(exo, error)
             }
@@ -1830,6 +1844,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         positionJob?.cancel()
         positionJob = viewModelScope.launch {
             while (true) {
+                // An uncaught exception in a viewModelScope coroutine crashes the
+                // whole app (which looks like the player "randomly exiting" to the
+                // detail page). This ticks every 200ms against a player that can be
+                // released underneath it — never let a tick take the app down.
+                try {
                 player?.let { exo ->
                     val pos = exo.currentPosition.coerceAtLeast(0)
                     val dur = exo.duration
@@ -1860,6 +1879,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
                     // Show the Up Next overlay once we pass the midpoint.
                     maybeShowUpNext(pos, dur.coerceAtLeast(0L))
+                }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "Position tick failed (ignored): ${e.message}")
                 }
                 delay(200)
             }
@@ -2305,7 +2329,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         exo.playWhenReady = true
 
         exo.addListener(object : Player.Listener {
-            override fun onPlaybackStateChanged(state: Int) {
+            override fun onPlaybackStateChanged(state: Int) = guarded("streaming.stateChanged") {
                 _uiState.update {
                     it.copy(
                         isBuffering = state == Player.STATE_BUFFERING,
@@ -2330,16 +2354,16 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 if (state == Player.STATE_ENDED) onVodEnded()
             }
 
-            override fun onIsPlayingChanged(playing: Boolean) {
+            override fun onIsPlayingChanged(playing: Boolean) = guarded("streaming.isPlaying") {
                 _uiState.update { it.copy(isPlaying = playing) }
                 if (!playing && exo.playbackState == Player.STATE_READY) {
                     _uiState.update { it.copy(showPauseOverlay = true, showControls = false) }
                 }
             }
 
-            override fun onTracksChanged(tracks: Tracks) { updateTracks() }
+            override fun onTracksChanged(tracks: Tracks) = guarded("streaming.tracks") { updateTracks() }
 
-            override fun onPlayerError(error: PlaybackException) {
+            override fun onPlayerError(error: PlaybackException) = guarded("streaming.error") {
                 Log.w(TAG, "Playback error (createStreamingPlayer): ${error.errorCodeName}", error)
                 scheduleStreamStartupRetry(exo, error)
             }
@@ -2456,7 +2480,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         exo.playWhenReady = true
 
         exo.addListener(object : Player.Listener {
-            override fun onPlaybackStateChanged(state: Int) {
+            override fun onPlaybackStateChanged(state: Int) = guarded("iptv.stateChanged") {
                 _uiState.update {
                     it.copy(
                         isBuffering = state == Player.STATE_BUFFERING,
@@ -2498,16 +2522,16 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
 
-            override fun onIsPlayingChanged(playing: Boolean) {
+            override fun onIsPlayingChanged(playing: Boolean) = guarded("iptv.isPlaying") {
                 _uiState.update { it.copy(isPlaying = playing) }
                 if (!playing && exo.playbackState == Player.STATE_READY) {
                     _uiState.update { it.copy(showPauseOverlay = true, showControls = false) }
                 }
             }
 
-            override fun onTracksChanged(tracks: Tracks) { updateTracks() }
+            override fun onTracksChanged(tracks: Tracks) = guarded("iptv.tracks") { updateTracks() }
 
-            override fun onPlayerError(error: PlaybackException) {
+            override fun onPlayerError(error: PlaybackException) = guarded("iptv.error") {
                 Log.w(TAG, "IPTV playback error: ${error.errorCodeName}", error)
                 if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
                     // Standard Media3 fix: jump to live edge and re-prepare.
@@ -2519,7 +2543,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         Log.w(TAG, "BEHIND_LIVE_WINDOW recovery failed: ${e.message}")
                         recoverIptvStream("behind-live-window-failed")
                     }
-                    return
+                    return@guarded
                 }
                 recoverIptvStream("error:${error.errorCodeName}")
             }
@@ -3049,6 +3073,40 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /** From the error overlay: retry playback without leaving the player. */
+    fun retryFromError() {
+        _uiState.update { it.copy(error = null, isConnecting = true, connectionStatus = "Retrying…") }
+        val s = _uiState.value
+        val url = currentStreamUrl
+        when {
+            // Streaming with a TMDB id: re-run extraction for the current source.
+            s.isStreamingMode && !s.isIptv && s.tmdbId > 0 -> switchToSource(s.currentSourceIndex)
+            // Otherwise re-prepare whatever URL we were playing.
+            url != null -> viewModelScope.launch(Dispatchers.Main) {
+                try {
+                    val exo = player
+                    if (exo != null) {
+                        exo.stop(); exo.clearMediaItems()
+                        exo.setMediaItem(MediaItem.fromUri(url)); exo.prepare(); exo.playWhenReady = true
+                    } else if (s.isStreamingMode) {
+                        createStreamingPlayer(url, s.referer ?: "")
+                    } else {
+                        createPlayer(url)
+                    }
+                } catch (e: Exception) {
+                    _uiState.update { it.copy(isConnecting = false, error = e.message ?: "Retry failed") }
+                }
+            }
+            else -> _uiState.update { it.copy(isConnecting = false, error = "Nothing to retry — try changing source") }
+        }
+    }
+
+    /** From the error overlay: clear the error and open the source picker. */
+    fun changeSourceFromError() {
+        _uiState.update { it.copy(error = null, isConnecting = false) }
+        showSourcesPanel()
+    }
+
     fun switchToSource(sourceIdx: Int, userInitiated: Boolean = false) {
         val state = _uiState.value
         Log.i(TAG, "switchToSource($sourceIdx, user=$userInitiated) tmdbId=${state.tmdbId} season=${state.seasonNumber} episode=${state.episodeNumber} isMovie=${state.isMovie}")
@@ -3065,13 +3123,16 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
         viewModelScope.launch {
             val context = getApplication<Application>()
+            // Manual picks get a generous floor on the timeout — a short user
+            // setting shouldn't make an explicit choice fail instantly.
+            val baseTimeout = AppPreferences.streamingExtractTimeoutSec * 1000L
             val result = StreamExtractorService.extract(
                 context = context,
                 sourceIdx = sourceIdx,
                 tmdbId = state.tmdbId,
                 season = if (state.isMovie) null else state.seasonNumber,
                 episode = if (state.isMovie) null else state.episodeNumber,
-                timeoutMs = AppPreferences.streamingExtractTimeoutSec * 1000L
+                timeoutMs = if (userInitiated) maxOf(baseTimeout, 30_000L) else baseTimeout
             )
             if (result != null) {
                 withContext(Dispatchers.Main) {
@@ -3087,10 +3148,28 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     }
                     createStreamingPlayer(result.url, result.referer)
                 }
+            } else if (userInitiated) {
+                // The user's manual pick failed to extract. Do NOT jump to another
+                // source (that felt like "it always goes back to the default") —
+                // keep the currently-playing stream, tag the pick as failed, and
+                // tell the user.
+                Log.w(TAG, "Manual source pick $sourceIdx failed extraction — keeping current stream")
+                setSourceStatus(sourceIdx, "failed")
+                autoAdvanceSources = true // the pick never took effect
+                withContext(Dispatchers.Main) {
+                    _uiState.update { it.copy(isSwitchingSource = false, isConnecting = false) }
+                    val name = StreamExtractorService.SOURCES.find { it.index == sourceIdx }?.name ?: "Source"
+                    android.widget.Toast.makeText(
+                        getApplication(),
+                        "$name has no stream for this title — keeping current source",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
             } else {
                 // Extraction failed for this source — fall back to the next one in priority order.
                 Log.w(TAG, "Extraction returned null for source $sourceIdx, falling back")
                 failedSourceIndices.add(sourceIdx)
+                setSourceStatus(sourceIdx, "failed")
                 val nextIdx = orderedSourceIndices.firstOrNull { it !in failedSourceIndices }
                 if (nextIdx != null) {
                     val nextName = StreamExtractorService.SOURCES.find { it.index == nextIdx }?.name ?: "source"

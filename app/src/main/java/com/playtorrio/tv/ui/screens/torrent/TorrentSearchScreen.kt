@@ -68,11 +68,20 @@ fun TorrentSearchScreen(navController: NavController) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    var query by remember { mutableStateOf("") }
-    var category by remember { mutableStateOf(TorrentCategory.ALL) }
-    var results by remember { mutableStateOf<List<TorrentResult>>(emptyList()) }
+    // Seed from the back-nav cache so returning from the player restores the
+    // query/category/results instantly instead of refetching.
+    val cache = com.playtorrio.tv.ui.ScreenStateCache.TorrentSearch
+    val restoring = cache.results.isNotEmpty()
+    var query by remember { mutableStateOf(if (restoring) cache.query else "") }
+    var category by remember {
+        mutableStateOf(
+            if (restoring) TorrentCategory.entries.firstOrNull { it.name == cache.categoryName } ?: TorrentCategory.ALL
+            else TorrentCategory.ALL
+        )
+    }
+    var results by remember { mutableStateOf(if (restoring) cache.results else emptyList<TorrentResult>()) }
     var loading by remember { mutableStateOf(false) }
-    var showingPopular by remember { mutableStateOf(true) }
+    var showingPopular by remember { mutableStateOf(if (restoring) cache.showingPopular else true) }
 
     val searchFocus = remember { FocusRequester() }
 
@@ -80,8 +89,11 @@ fun TorrentSearchScreen(navController: NavController) {
     // changes; a blank query shows the Popular list for the category. The
     // LaunchedEffect restart cancels the previous 450ms wait, so we only hit
     // the network after the user pauses typing.
+    var loadedKey by remember { mutableStateOf(if (restoring) "${cache.query.trim()}|${category.name}" else null) }
     LaunchedEffect(query, category) {
         val q = query.trim()
+        val key = "$q|${category.name}"
+        if (key == loadedKey && results.isNotEmpty()) return@LaunchedEffect
         if (q.isBlank()) {
             showingPopular = true
             loading = true
@@ -94,6 +106,11 @@ fun TorrentSearchScreen(navController: NavController) {
             results = runCatching { TorrentSearchService.searchCategory(q, category) }.getOrDefault(emptyList())
             loading = false
         }
+        loadedKey = key
+        cache.query = query
+        cache.categoryName = category.name
+        cache.results = results
+        cache.showingPopular = showingPopular
     }
 
     fun play(result: TorrentResult) {

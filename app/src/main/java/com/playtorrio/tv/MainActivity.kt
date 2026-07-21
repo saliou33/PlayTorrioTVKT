@@ -242,6 +242,27 @@ class MainActivity : ComponentActivity() {
                             navController = navController
                         )
                     }
+                    composable(
+                        "addon_directory/{addonId}/{type}/{catalogId}/{title}",
+                        arguments = listOf(
+                            navArgument("addonId") { type = NavType.StringType },
+                            navArgument("type") { type = NavType.StringType },
+                            navArgument("catalogId") { type = NavType.StringType },
+                            navArgument("title") { type = NavType.StringType }
+                        )
+                    ) { backStackEntry ->
+                        com.playtorrio.tv.ui.screens.stremio.AddonDirectoryScreen(
+                            addonId = backStackEntry.arguments!!.getString("addonId")!!
+                                .let { android.net.Uri.decode(it) },
+                            type = backStackEntry.arguments!!.getString("type")!!
+                                .let { android.net.Uri.decode(it) },
+                            catalogId = backStackEntry.arguments!!.getString("catalogId")!!
+                                .let { android.net.Uri.decode(it) },
+                            title = backStackEntry.arguments!!.getString("title")!!
+                                .let { android.net.Uri.decode(it) },
+                            navController = navController
+                        )
+                    }
 
                     composable("anime") {
                         AnimeScreen(navController = navController, vm = animeVm)

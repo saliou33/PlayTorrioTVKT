@@ -258,7 +258,7 @@ fun PlayerScreen(viewModel: PlayerViewModel) {
     ) {
         // ── Error state ──
         if (state.error != null) {
-            ErrorOverlay(state)
+            ErrorOverlay(state, viewModel)
             return@Box
         }
 
@@ -2421,10 +2421,10 @@ private fun LoadingOverlay(state: PlayerUiState) {
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun ErrorOverlay(state: PlayerUiState) {
-    val exitFocusRequester = remember { FocusRequester() }
+private fun ErrorOverlay(state: PlayerUiState, viewModel: PlayerViewModel) {
+    val retryFocusRequester = remember { FocusRequester() }
 
-    LaunchedEffect(Unit) { exitFocusRequester.requestFocus() }
+    LaunchedEffect(Unit) { runCatching { retryFocusRequester.requestFocus() } }
 
     Box(
         modifier = Modifier
@@ -2452,28 +2452,59 @@ private fun ErrorOverlay(state: PlayerUiState) {
                 style = MaterialTheme.typography.bodyLarge,
                 color = Color.White.copy(alpha = 0.7f),
                 textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 32.dp)
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 32.dp).widthIn(max = 640.dp)
             )
             Spacer(Modifier.height(16.dp))
-            Card(
-                onClick = { /* Activity finish handled by back press */ },
-                modifier = Modifier
-                    .focusRequester(exitFocusRequester)
-                    .focusable(),
-                colors = CardDefaults.colors(
-                    containerColor = AccentColor,
-                    focusedContainerColor = AccentColor
-                ),
-                shape = CardDefaults.shape(RoundedCornerShape(8.dp))
-            ) {
-                Text(
-                    text = "Press Back to Return",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = Color.White,
-                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp)
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                ErrorActionButton(
+                    label = "Retry",
+                    focusRequester = retryFocusRequester,
+                    onClick = { viewModel.retryFromError() }
                 )
+                if (state.isStreamingMode && !state.isIptv) {
+                    ErrorActionButton(
+                        label = "Change source",
+                        onClick = { viewModel.changeSourceFromError() }
+                    )
+                }
             }
+            Text(
+                text = "Press Back to exit the player",
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.White.copy(alpha = 0.4f)
+            )
         }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun ErrorActionButton(
+    label: String,
+    onClick: () -> Unit,
+    focusRequester: FocusRequester? = null,
+) {
+    var isFocused by remember { mutableStateOf(false) }
+    Card(
+        onClick = onClick,
+        modifier = Modifier
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+            .onFocusChanged { isFocused = it.isFocused },
+        colors = CardDefaults.colors(
+            containerColor = if (isFocused) AccentColor else AccentColor.copy(alpha = 0.25f),
+            focusedContainerColor = AccentColor
+        ),
+        shape = CardDefaults.shape(RoundedCornerShape(8.dp)),
+        scale = CardDefaults.scale(focusedScale = 1.05f)
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge,
+            color = Color.White,
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp)
+        )
     }
 }
 
