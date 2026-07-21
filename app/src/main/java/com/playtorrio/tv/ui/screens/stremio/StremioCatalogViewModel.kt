@@ -183,10 +183,15 @@ class StremioCatalogViewModel(
                 extra = currentExtras + mapOf("skip" to skip.toString())
             )?.metas ?: emptyList()
 
+            // Many addons ignore the skip parameter and return the same first
+            // page again — appending blindly duplicated the whole list and kept
+            // "loading more" alive forever. De-dupe by id; nothing new = the end.
+            val seen = state.items.mapTo(HashSet()) { it.id }
+            val fresh = page.filter { it.id !in seen }
             _uiState.value = _uiState.value.copy(
                 isLoadingMore = false,
-                items = state.items + page,
-                hasMore = page.isNotEmpty()
+                items = state.items + fresh,
+                hasMore = fresh.isNotEmpty()
             )
         }
     }

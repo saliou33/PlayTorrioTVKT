@@ -156,12 +156,20 @@ class DetailViewModel : ViewModel() {
         )
     }
 
+    private var loadedKey: String? = null
+
     fun load(mediaId: Int, isMovie: Boolean) {
+        // Back-return re-runs the screen's LaunchedEffect; skip the ~6-endpoint
+        // TMDB refetch when we already hold this title's data.
+        val key = "${if (isMovie) "mv" else "tv"}_$mediaId"
+        if (key == loadedKey && _uiState.value.title.isNotBlank() && !_uiState.value.isLoading) return
+        loadedKey = key
         viewModelScope.launch {
             try {
                 if (isMovie) loadMovie(mediaId) else loadTv(mediaId)
             } catch (e: Exception) {
                 Log.e("DetailViewModel", "Failed to load details", e)
+                loadedKey = null
                 _uiState.value = DetailUiState(isLoading = false, error = e.message)
             }
         }

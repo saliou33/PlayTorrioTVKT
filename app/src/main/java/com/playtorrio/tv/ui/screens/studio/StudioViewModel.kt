@@ -59,6 +59,9 @@ class StudioViewModel : ViewModel() {
     private val key = TmdbClient.API_KEY
 
     fun load(companyId: Int) {
+        // Back-return re-runs the screen's LaunchedEffect; keep existing data.
+        val s = _uiState.value
+        if (s.loadedId == companyId && !s.isNetworkMode && s.company != null) return
         viewModelScope.launch {
             _uiState.value = StudioUiState(isLoading = true, loadedId = companyId)
             try {
@@ -91,6 +94,10 @@ class StudioViewModel : ViewModel() {
     }
 
     fun loadNetwork(networkId: Int) {
+        // Back-return re-runs the screen's LaunchedEffect; keep existing data
+        // (preserves the ALL/SHOWS/MOVIES filter and loaded pages).
+        val s = _uiState.value
+        if (s.loadedId == networkId && s.isNetworkMode && s.company != null) return
         viewModelScope.launch {
             _uiState.value = StudioUiState(isLoading = true, isNetworkMode = true, loadedId = networkId)
             try {
