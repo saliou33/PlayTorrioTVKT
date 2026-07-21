@@ -195,6 +195,16 @@ data class PlayerUiState(
     val currentAnimeEmbedUrl: String? = null,
     /** True for direct IPTV (Xtream-Codes) streams — disables source fallback / picker. */
     val isIptv: Boolean = false,
+    // ── Addon-origin sources (Stremio streams for the current item) ──
+    /** True when playback originated from a Stremio addon — the Sources panel
+     *  then lists the addon streams for this item instead of the built-in
+     *  extractor sources (Xpass etc.), which are unrelated to addon content. */
+    val isAddonOrigin: Boolean = false,
+    val addonStreams: List<com.playtorrio.tv.data.stremio.StremioStream> = emptyList(),
+    val isLoadingAddonStreams: Boolean = false,
+    /** Key (url/infoHash) of the currently playing addon stream, for marking
+     *  the active row in the panel. */
+    val currentStreamPickKey: String? = null,
     // Episodes (for series)
     val episodes: List<com.playtorrio.tv.data.model.Episode> = emptyList(),
     val isLoadingEpisodes: Boolean = false,
@@ -577,6 +587,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 animeEmbeds = null,
                 animeTracksJson = null,
                 animeEmbedsJson = null,
+                isAddonOrigin = false,
+                addonStreams = emptyList(),
+                isLoadingAddonStreams = false,
+                currentStreamPickKey = null,
             )
         }
     }
@@ -678,6 +692,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         resumeAddonId = addonId?.takeIf { it.isNotBlank() && it != "_auto_" }
         resumeStremioType = type
         resumeStremioId = stremioId
+        _uiState.update { it.copy(isAddonOrigin = true) }
         viewModelScope.launch {
             try {
                 val context = getApplication<Application>()
@@ -885,6 +900,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         resumeStreamPickName = streamPickName?.takeIf { it.isNotBlank() }
         resumeFileIdx = fileIdx
         pendingSeekMs = resumePositionMs
+        _uiState.update {
+            it.copy(
+                isAddonOrigin = resumeStremioId != null,
+                currentStreamPickKey = resumeStreamPickKey,
+            )
+        }
     }
 
     private fun resetStartupRetryState() {
@@ -3022,6 +3043,94 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun showSourcesPanel() {
         _uiState.update { it.copy(showSourcesPanel = true, showControls = false) }
+        val s = _uiState.value
+        // Addon-origin: the panel lists the addon streams for THIS item, so
+        // fetch them on first open (episode-aware for series).
+        if (s.isAddonOrigin && s.addonStreams.isEmpty() && !s.isLoadingAddonStreams) {
+            val sid = resumeStremioId ?: return
+            _uiState.update { it.copy(isLoadingAddonStreams = true) }
+            viewModelScope.launch {
+                try {
+                    val addons = com.playtorrio.tv.data.stremio.StremioAddonRepository.getAddons()
+                    // For series, streams are keyed by videoId (id:season:episode).
+                    val candidateIds = buildList {
+                        if (!s.isMovie && s.seasonNumber != null && s.episodeNumber != null &&
+                            !sid.contains(":")
+                        ) add("$sid:${s.seasonNumber}:${s.episodeNumber}")
+                        add(sid)
+                    }
+                    val candidateTypes = listOf(resumeStremioType ?: "movie", "movie", "series", "channel", "tv").distinct()
+                    var streams: List<com.playtorrio.tv.data.stremio.StremioStream> = emptyList()
+                    outer@ for (id in candidateIds) {
+                        for (t in candidateTypes) {
+                            streams = com.playtorrio.tv.data.stremio.StremioService.getStreams(addons, t, id, resumeAddonId)
+                            if (streams.isNotEmpty()) break@outer
+                        }
+                    }
+                    _uiState.update { it.copy(addonStreams = streams, isLoadingAddonStreams = false) }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Addon stream list fetch failed: ${e.message}")
+                    _uiState.update { it.copy(isLoadingAddonStreams = false) }
+                }
+            }
+        }
+    }
+
+    /** Switch the CURRENT item to another addon stream, in place, resuming at
+     *  the current position. */
+    fun pickAddonStream(stream: com.playtorrio.tv.data.stremio.StremioStream) {
+        val s = _uiState.value
+        if (s.isSwitchingSource || s.isSwitchingEpisode) return
+        resumeStreamPickKey = stream.url ?: stream.infoHash
+        resumeStreamPickName = stream.name ?: stream.title
+        val resumePos = player?.currentPosition?.takeIf { it > 5_000L }
+        _uiState.update {
+            it.copy(showSourcesPanel = false, isSwitchingSource = true, currentStreamPickKey = resumeStreamPickKey)
+        }
+        viewModelScope.launch {
+            try {
+                when (val route = com.playtorrio.tv.data.stremio.StremioService.routeStream(stream)) {
+                    is com.playtorrio.tv.data.stremio.StreamRoute.DirectUrl -> {
+                        teardownForSwap()
+                        currentMagnetUri = null
+                        val referer = route.headers?.get("Referer") ?: route.headers?.get("referer") ?: ""
+                        withContext(Dispatchers.Main) {
+                            addedExternalSubConfigs.clear(); addedExternalSubLabels.clear()
+                            player?.release(); player = null
+                            pendingSeekMs = resumePos
+                            _uiState.update { it.copy(isSwitchingSource = false, isStreamingMode = true, isMagnet = false, torrentHash = null) }
+                            if (referer.isNotBlank()) createStreamingPlayer(route.url, referer) else createPlayer(route.url)
+                        }
+                    }
+                    is com.playtorrio.tv.data.stremio.StreamRoute.Torrent -> {
+                        teardownForSwap()
+                        currentMagnetUri = route.magnet
+                        resumeFileIdx = route.fileIdx
+                        val context = getApplication<Application>()
+                        com.playtorrio.tv.data.torrent.TorrServerService.ensureInitialized(context)
+                        val result = com.playtorrio.tv.data.torrent.TorrServerService.startStreaming(
+                            context = context, magnetUri = route.magnet,
+                            seasonNumber = s.seasonNumber, episodeNumber = s.episodeNumber,
+                            fileIdx = route.fileIdx,
+                        )
+                        withContext(Dispatchers.Main) {
+                            addedExternalSubConfigs.clear(); addedExternalSubLabels.clear()
+                            player?.release(); player = null
+                            pendingSeekMs = resumePos
+                            _uiState.update { it.copy(isSwitchingSource = false, isStreamingMode = false, isMagnet = true, torrentHash = result.hash) }
+                            startStatsPoller(result.hash)
+                            createPlayer(result.url)
+                        }
+                    }
+                    else -> {
+                        _uiState.update { it.copy(isSwitchingSource = false, error = "Unsupported stream type") }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "pickAddonStream failed", e)
+                _uiState.update { it.copy(isSwitchingSource = false, error = e.message ?: "Stream switch failed") }
+            }
+        }
     }
 
     fun dismissSourcesPanel() {

@@ -797,8 +797,9 @@ private fun PlayerControlsOverlay(
                         onFocused = { viewModel.scheduleControlsHide() }
                     )
 
-                    // Sources (streaming mode only, but not for IPTV)
-                    if (state.isStreamingMode && !state.isIptv) {
+                    // Sources — extractor sources for TMDB streaming, or the
+                    // addon's own stream list for addon-origin playback.
+                    if ((state.isStreamingMode || state.isAddonOrigin) && !state.isIptv) {
                         ControlButton(
                             icon = Icons.Filled.Layers,
                             contentDescription = "Sources",
@@ -2081,7 +2082,12 @@ private fun StreamSourcesPanel(state: PlayerUiState, viewModel: PlayerViewModel)
                     modifier = Modifier.padding(bottom = 12.dp)
                 )
 
-                RailColumn(width = 280.dp, title = if (state.animeEmbeds != null) "Available Servers" else "Available Sources") {
+                val railTitle = when {
+                    state.animeEmbeds != null -> "Available Servers"
+                    state.isAddonOrigin -> "Addon Streams"
+                    else -> "Available Sources"
+                }
+                RailColumn(width = if (state.isAddonOrigin && state.animeEmbeds == null) 460.dp else 280.dp, title = railTitle) {
                     LazyColumn(
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                         contentPadding = PaddingValues(top = 8.dp, bottom = 8.dp),
@@ -2103,6 +2109,43 @@ private fun StreamSourcesPanel(state: PlayerUiState, viewModel: PlayerViewModel)
                                     },
                                     focusRequester = if (index == 0) firstFocusRequester else null
                                 )
+                            }
+                        } else if (state.isAddonOrigin) {
+                            // Streams from the addons for THIS item (quality, torrent
+                            // vs direct, provider) — never the unrelated extractors.
+                            if (state.isLoadingAddonStreams) {
+                                item {
+                                    Box(Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) {
+                                        CircularProgressIndicator(color = AccentColor, modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                                    }
+                                }
+                            } else if (state.addonStreams.isEmpty()) {
+                                item {
+                                    Text(
+                                        "No addon streams found for this title.",
+                                        color = Color.White.copy(alpha = 0.5f),
+                                        fontSize = 13.sp,
+                                        modifier = Modifier.padding(16.dp)
+                                    )
+                                }
+                            } else {
+                                itemsIndexed(state.addonStreams, key = { i, _ -> "as_$i" }) { index, stream ->
+                                    val key = stream.url ?: stream.infoHash
+                                    val isCurrent = key != null && key == state.currentStreamPickKey
+                                    val kind = if (!stream.infoHash.isNullOrBlank() ||
+                                        stream.url?.startsWith("magnet:", true) == true) "T" else "D"
+                                    val label = buildString {
+                                        append("[").append(kind).append("] ")
+                                        stream.addonName?.takeIf { it.isNotBlank() }?.let { append(it).append(" · ") }
+                                        append((stream.name ?: stream.title ?: "Stream").replace('\n', ' '))
+                                    }
+                                    SourceItemCard(
+                                        name = label,
+                                        isSelected = isCurrent,
+                                        onClick = { if (!isCurrent) viewModel.pickAddonStream(stream) },
+                                        focusRequester = if (index == 0) firstFocusRequester else null
+                                    )
+                                }
                             }
                         } else {
                             itemsIndexed(sources) { index, source ->
@@ -2463,7 +2506,7 @@ private fun ErrorOverlay(state: PlayerUiState, viewModel: PlayerViewModel) {
                     focusRequester = retryFocusRequester,
                     onClick = { viewModel.retryFromError() }
                 )
-                if (state.isStreamingMode && !state.isIptv) {
+                if ((state.isStreamingMode || state.isAddonOrigin) && !state.isIptv) {
                     ErrorActionButton(
                         label = "Change source",
                         onClick = { viewModel.changeSourceFromError() }
