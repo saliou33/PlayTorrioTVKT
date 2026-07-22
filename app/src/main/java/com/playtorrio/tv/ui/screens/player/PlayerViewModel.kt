@@ -219,6 +219,8 @@ data class PlayerUiState(
     /** Auto-play the next episode when the current one ends. Session mirror of
      *  AppPreferences.autoplayNext; toggleable from the player controls. */
     val autoplayNext: Boolean = true,
+    /** Night dim overlay over the video (strength set in Settings). */
+    val dimEnabled: Boolean = false,
     // ── Up Next overlay + suggestions slideshow ──
     /** Suggestion shown as "Up Next" for movies (or when there's no next
      *  episode). Series use [nextEpisode] instead. */
@@ -369,6 +371,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val v = !_uiState.value.autoplayNext
         AppPreferences.autoplayNext = v
         _uiState.update { it.copy(autoplayNext = v) }
+    }
+
+    fun toggleDim() {
+        _uiState.update { it.copy(dimEnabled = !it.dimEnabled) }
     }
 
     // ── Up Next overlay ──────────────────────────────────────────────────────

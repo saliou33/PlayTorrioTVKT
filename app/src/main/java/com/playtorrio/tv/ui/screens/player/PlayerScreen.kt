@@ -271,6 +271,21 @@ fun PlayerScreen(viewModel: PlayerViewModel) {
         // ── Video ──
         VideoRenderer(viewModel, state)
 
+        // ── Night dim overlay ── sits over the video, under subtitles/controls,
+        // so UI stays readable while the picture is dimmed.
+        if (state.dimEnabled) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(
+                        Color.Black.copy(
+                            alpha = (com.playtorrio.tv.data.AppPreferences.playerDimPercent / 100f)
+                                .coerceIn(0.1f, 0.85f)
+                        )
+                    )
+            )
+        }
+
         // ── Custom external-subtitle overlay ──
         // Renders subtitles parsed by SubtitleCueParser so that delay changes
         // apply instantly without reloading the player.
@@ -847,6 +862,16 @@ private fun PlayerControlsOverlay(
                             onFocused = { viewModel.scheduleControlsHide() }
                         )
                     }
+
+                    // Night dim toggle (strength in Settings → Player dim)
+                    ControlButton(
+                        icon = if (state.dimEnabled) Icons.Filled.Brightness6 else Icons.Filled.Nightlight,
+                        contentDescription = if (state.dimEnabled) "Restore brightness" else "Dim screen",
+                        onClick = { viewModel.toggleDim() },
+                        upFocusRequester = progressBarFocusRequester,
+                        onDownKey = { viewModel.hideControls() },
+                        onFocused = { viewModel.scheduleControlsHide() }
+                    )
                 }
 
                 // Time display

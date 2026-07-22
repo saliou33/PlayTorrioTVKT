@@ -302,6 +302,20 @@ fun SettingsScreen(navController: NavController) {
                 )
             }
 
+            Spacer(Modifier.height(12.dp))
+            var dimPercent by remember { mutableStateOf(AppPreferences.playerDimPercent) }
+            SettingsSliderRow(
+                title = "Night dim strength",
+                description = "How dark the player's night-mode overlay gets (toggle with the moon button)",
+                value = dimPercent,
+                range = 10..80,
+                suffix = "%",
+                onValueChange = {
+                    dimPercent = it
+                    AppPreferences.playerDimPercent = it
+                }
+            )
+
             Spacer(Modifier.height(16.dp))
             var playHistory by remember { mutableStateOf(AppPreferences.playHistoryEnabled) }
             SettingsToggleRow(

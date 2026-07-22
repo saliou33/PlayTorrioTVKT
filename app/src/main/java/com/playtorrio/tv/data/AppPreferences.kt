@@ -91,6 +91,11 @@ object AppPreferences {
         get() = prefs.getInt("upnext_overlay_sec", 15).coerceIn(5, 30)
         set(value) = prefs.edit().putInt("upnext_overlay_sec", value.coerceIn(5, 30)).apply()
 
+    /** Player: strength of the night dim overlay (percent black). Clamped 10..80. */
+    var playerDimPercent: Int
+        get() = prefs.getInt("player_dim_percent", 40).coerceIn(10, 80)
+        set(value) = prefs.edit().putInt("player_dim_percent", value.coerceIn(10, 80)).apply()
+
     /** Live TV: persist the "alive only" filter + the set of channel URLs found
      *  dead by the alive-check, so the filter survives app restarts. */
     var liveTvAliveOnly: Boolean
