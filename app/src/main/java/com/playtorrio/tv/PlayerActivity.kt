@@ -97,6 +97,7 @@ class PlayerActivity : ComponentActivity() {
                 animeEmbedUrl = animeEmbedUrl,
                 animeId = animeId,
                 animeCategory = animeCategory,
+                customHeadersJson = intent.getStringExtra("streamHeaders"),
             )
         } else {
             // Torrent mode — magnet URI via TorrServer

@@ -12,8 +12,8 @@ android {
         applicationId = "com.playtorrio.tv"
         minSdk = 23
         targetSdk = 35
-        versionCode = 40
-        versionName = "1.4.20"
+        versionCode = 41
+        versionName = "1.4.21"
 
         // GitHub repo used by the in-app updater (UpdateChecker reads BuildConfig.UPDATE_REPO)
         buildConfigField("String", "UPDATE_REPO", "\"saliou33/PlayTorrioTVKT\"")

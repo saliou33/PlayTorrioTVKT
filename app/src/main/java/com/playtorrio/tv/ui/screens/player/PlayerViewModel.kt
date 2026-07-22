@@ -255,6 +255,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     /** When autoplay advances to a torrent/addon episode, auto-pick the top
      *  source instead of waiting for the user to choose in the overlay. */
     private var pendingAutoPickEpisode = false
+    /** Extra HTTP headers the current stream requires (Stremio
+     *  behaviorHints.proxyHeaders) — merged LAST into the data-source headers
+     *  so they override defaults, including User-Agent. */
+    private var customStreamHeaders: Map<String, String> = emptyMap()
     private var currentStreamUrl: String? = null
     /** Track which stream URL we already auto-pinned highest quality for. */
     private var autoQualityAppliedForUrl: String? = null
@@ -547,6 +551,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private fun beginInPlaceSwap(title: String, poster: String?, isMovie: Boolean, tmdbId: Int, status: String) {
         flushProgressInternal()
         resetUpNextForNewItem()
+        customStreamHeaders = emptyMap()
         currentMagnetUri = null
         resumeAddonId = null
         resumeStremioType = null
@@ -714,6 +719,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 when (val route = com.playtorrio.tv.data.stremio.StremioService.routeStream(stream)) {
                     is com.playtorrio.tv.data.stremio.StreamRoute.DirectUrl -> {
                         val referer = route.headers?.get("Referer") ?: route.headers?.get("referer") ?: ""
+                        customStreamHeaders = route.headers ?: emptyMap()
                         withContext(Dispatchers.Main) {
                             addedExternalSubConfigs.clear(); addedExternalSubLabels.clear()
                             player?.release(); player = null
@@ -939,6 +945,16 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun setSourceStatus(idx: Int, status: String) {
         _uiState.update { it.copy(sourceStatus = it.sourceStatus + (idx to status)) }
+    }
+
+    private fun parseHeadersJson(json: String?): Map<String, String> {
+        if (json.isNullOrBlank()) return emptyMap()
+        return runCatching {
+            val obj = org.json.JSONObject(json)
+            buildMap {
+                obj.keys().forEach { k -> put(k, obj.getString(k)) }
+            }
+        }.getOrDefault(emptyMap())
     }
 
     /** An exception thrown inside a Player.Listener callback crashes the whole
@@ -2097,11 +2113,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         animeEmbedUrl: String? = null,
         animeId: String? = null,
         animeCategory: String? = null,
+        customHeadersJson: String? = null,
     ) {
         if (player != null) return
         failedSourceIndices.clear()
         autoAdvanceSources = true
         setSourceStatus(sourceIndex, "ok")
+
+        customStreamHeaders = parseHeadersJson(customHeadersJson)
 
         resumeAnimeId = animeId
         resumeAnimeCategory = animeCategory
@@ -2241,6 +2260,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 put("Origin", origin)
             }
             put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36")
+            // Stream-declared headers (behaviorHints.proxyHeaders) win — some
+            // addon CDNs (e.g. NoTorrent's "MPV" streams) whitelist a specific
+            // player User-Agent and 403 everything else.
+            putAll(customStreamHeaders)
         }
 
         val dataSourceFactory = DefaultHttpDataSource.Factory()
@@ -2425,6 +2448,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 put("Origin", origin)
             }
             put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36")
+            // Stream-declared headers (behaviorHints.proxyHeaders) win — some
+            // addon CDNs (e.g. NoTorrent's "MPV" streams) whitelist a specific
+            // player User-Agent and 403 everything else.
+            putAll(customStreamHeaders)
         }
 
         val httpFactory = DefaultHttpDataSource.Factory()
@@ -3122,6 +3149,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         teardownForSwap()
                         currentMagnetUri = null
                         val referer = route.headers?.get("Referer") ?: route.headers?.get("referer") ?: ""
+                        customStreamHeaders = route.headers ?: emptyMap()
                         withContext(Dispatchers.Main) {
                             addedExternalSubConfigs.clear(); addedExternalSubLabels.clear()
                             player?.release(); player = null
@@ -3274,6 +3302,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             )
             if (result != null) {
                 withContext(Dispatchers.Main) {
+                    customStreamHeaders = emptyMap() // extractor stream — default headers
                     player?.release()
                     player = null
                     _uiState.update {
@@ -3593,6 +3622,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     /** Streaming-mode switch: re-extract for new episode + swap player in-place. */
     private fun switchToStreamingEpisode(episode: com.playtorrio.tv.data.model.Episode) {
         pendingAutoPickEpisode = false // streaming path never uses the source overlay
+        customStreamHeaders = emptyMap() // extractor streams use default headers
         val s = _uiState.value
         val tmdbId = s.tmdbId.takeIf { it > 0 } ?: return
         val sNum = episode.seasonNumber ?: s.seasonNumber ?: return
@@ -3663,6 +3693,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     ) {
         val sNum = episode.seasonNumber ?: _uiState.value.seasonNumber ?: return
         val eNum = episode.episodeNumber
+        customStreamHeaders = headers ?: emptyMap()
         flushProgressInternal()
         // Update resume context for new pick
         resumeStreamPickName = stream.name ?: stream.title

@@ -141,6 +141,11 @@ fun StremioDetailScreen(
                             val intent = Intent(context, PlayerActivity::class.java).apply {
                                 putExtra("streamUrl", route.url)
                                 putExtra("streamReferer", route.headers?.get("Referer") ?: "")
+                                // Full stream-declared headers (some CDNs require a
+                                // specific User-Agent, e.g. "MPV"-tagged streams).
+                                route.headers?.takeIf { it.isNotEmpty() }?.let {
+                                    putExtra("streamHeaders", org.json.JSONObject(it as Map<*, *>).toString())
+                                }
                                 putExtra("title", meta?.name ?: "")
                                 putExtra("backdropUrl", meta?.background)
                                 putExtra("posterUrl", meta?.poster)

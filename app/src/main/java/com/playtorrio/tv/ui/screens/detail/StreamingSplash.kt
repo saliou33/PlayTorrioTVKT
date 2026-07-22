@@ -344,6 +344,9 @@ private suspend fun playFirstAddonStream(
                 context.startActivity(baseIntent().apply {
                     putExtra("streamUrl", route.url)
                     putExtra("streamReferer", route.headers?.get("Referer") ?: "")
+                    route.headers?.takeIf { it.isNotEmpty() }?.let {
+                        putExtra("streamHeaders", org.json.JSONObject(it as Map<*, *>).toString())
+                    }
                     stream.addonId?.let { putExtra("addonId", it) }
                     (stream.url ?: stream.infoHash)?.let { putExtra("streamPickKey", it) }
                     (stream.name ?: stream.title)?.let { putExtra("streamPickName", it) }
