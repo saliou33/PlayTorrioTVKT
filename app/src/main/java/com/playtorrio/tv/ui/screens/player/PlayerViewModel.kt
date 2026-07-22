@@ -342,6 +342,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private var resumeAddonId: String? = null
     private var resumeStremioType: String? = null
     private var resumeStremioId: String? = null
+    /** Base SERIES meta id (no :season:episode suffix) — used to fetch the
+     *  addon's episode list for the in-player Episodes panel. */
+    private var resumeStremioSeriesId: String? = null
     private var resumeStreamPickKey: String? = null
     private var resumeStreamPickName: String? = null
     
@@ -556,6 +559,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         resumeAddonId = null
         resumeStremioType = null
         resumeStremioId = null
+        resumeStremioSeriesId = null
         resumeStreamPickKey = null
         resumeStreamPickName = null
         resumeImdbId = null
@@ -697,6 +701,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         resumeAddonId = addonId?.takeIf { it.isNotBlank() && it != "_auto_" }
         resumeStremioType = type
         resumeStremioId = stremioId
+        resumeStremioSeriesId = stremioId
         _uiState.update { it.copy(isAddonOrigin = true) }
         viewModelScope.launch {
             try {
@@ -896,12 +901,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         streamPickName: String?,
         resumePositionMs: Long?,
         fileIdx: Int?,
+        stremioSeriesId: String? = null,
     ) {
         resumePosterUrl = posterUrl
         resumeImdbId = imdbId?.takeIf { it.isNotBlank() }
         resumeAddonId = addonId?.takeIf { it.isNotBlank() }
         resumeStremioType = stremioType?.takeIf { it.isNotBlank() }
         resumeStremioId = stremioId?.takeIf { it.isNotBlank() }
+        resumeStremioSeriesId = stremioSeriesId?.takeIf { it.isNotBlank() }
         resumeStreamPickKey = streamPickKey?.takeIf { it.isNotBlank() }
         resumeStreamPickName = streamPickName?.takeIf { it.isNotBlank() }
         resumeFileIdx = fileIdx
@@ -3428,6 +3435,44 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
 
+        // Addon series (no TMDB id): episode list comes from the addon's meta —
+        // exactly what the addon detail page shows.
+        val seriesId = resumeStremioSeriesId
+        if (s.tmdbId <= 0 && seriesId != null && !s.isMovie) {
+            _uiState.update { it.copy(isLoadingEpisodes = true) }
+            viewModelScope.launch {
+                try {
+                    val addons = com.playtorrio.tv.data.stremio.StremioAddonRepository.getAddons()
+                    val meta = com.playtorrio.tv.data.stremio.StremioService.getMeta(
+                        addons = addons,
+                        type = resumeStremioType ?: "series",
+                        id = seriesId,
+                        preferredAddonId = resumeAddonId
+                    )
+                    val curSeason = s.seasonNumber
+                    val eps = meta?.videos.orEmpty()
+                        .filter { v -> v.episode != null && (curSeason == null || v.season == null || v.season == curSeason) }
+                        .sortedBy { it.episode }
+                        .map { v ->
+                            com.playtorrio.tv.data.model.Episode(
+                                id = v.episode!!,
+                                episodeNumber = v.episode,
+                                name = v.title,
+                                overview = v.overview,
+                                stillPath = null,
+                                seasonNumber = v.season ?: curSeason ?: 1,
+                            )
+                        }
+                    _uiState.update { it.copy(episodes = eps, isLoadingEpisodes = false) }
+                    computeNextEpisode()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to load addon episodes", e)
+                    _uiState.update { it.copy(isLoadingEpisodes = false) }
+                }
+            }
+            return
+        }
+
         val tvId = s.tmdbId.takeIf { it > 0 } ?: return
         val season = s.seasonNumber ?: return
         _uiState.update { it.copy(isLoadingEpisodes = true) }
@@ -3530,13 +3575,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         }
                     }
                     EpisodeOverlayKind.ADDON_STREAM -> {
-                        val imdb = resumeImdbId ?: ensureImdbIdForCurrent()
-                        if (imdb == null) {
+                        // Prefer imdb; fall back to the addon's own series id
+                        // (works for custom ids like kitsu:xxxx too).
+                        val baseId = resumeImdbId ?: ensureImdbIdForCurrent() ?: resumeStremioSeriesId
+                        if (baseId == null) {
                             _uiState.update { it.copy(isLoadingEpisodeOverlay = false) }
                             return@launch
                         }
                         val sNum = episode.seasonNumber ?: _uiState.value.seasonNumber
-                        val videoId = "$imdb:${sNum}:${episode.episodeNumber}"
+                        val videoId = "$baseId:${sNum}:${episode.episodeNumber}"
                         val addons = com.playtorrio.tv.data.stremio.StremioAddonRepository.getAddons()
                         val streams = com.playtorrio.tv.data.stremio.StremioService.getStreams(
                             addons = addons,

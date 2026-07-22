@@ -58,6 +58,7 @@ class PlayerActivity : ComponentActivity() {
             addonId = addonId,
             stremioType = stremioType,
             stremioId = stremioId,
+            stremioSeriesId = intent.getStringExtra("stremioSeriesId"),
             streamPickKey = streamPickKey,
             streamPickName = streamPickName,
             resumePositionMs = resumePositionMs,

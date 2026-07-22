@@ -163,6 +163,7 @@ fun DetailScreen(
                                     "$imdb:${state.torrentSeasonNumber}:${state.torrentEpisodeNumber}"
                                 } else imdb
                                 putExtra("stremioId", sid)
+                                putExtra("stremioSeriesId", imdb)
                             }
                             (stream.url ?: stream.infoHash)?.let { putExtra("streamPickKey", it) }
                             (stream.name ?: stream.title)?.let { putExtra("streamPickName", it) }
@@ -197,6 +198,7 @@ fun DetailScreen(
                                     "$imdb:${state.torrentSeasonNumber}:${state.torrentEpisodeNumber}"
                                 } else imdb
                                 putExtra("stremioId", sid)
+                                putExtra("stremioSeriesId", imdb)
                             }
                             (stream.url ?: stream.infoHash)?.let { putExtra("streamPickKey", it) }
                             (stream.name ?: stream.title)?.let { putExtra("streamPickName", it) }

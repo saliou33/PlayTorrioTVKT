@@ -132,6 +132,12 @@ fun StremioDetailScreen(
                                 stream.addonId?.let { putExtra("addonId", it) }
                                 putExtra("stremioType", type)
                                 putExtra("stremioId", stremioId)
+                                // Series context so the player's episode list,
+                                // next-episode and autoplay work for addon content.
+                                putExtra("stremioSeriesId", stremioId)
+                                state.selectedVideoSeason?.let { putExtra("seasonNumber", it) }
+                                state.selectedVideoEpisode?.let { putExtra("episodeNumber", it) }
+                                state.selectedVideoTitle?.let { putExtra("episodeTitle", it) }
                                 (stream.url ?: stream.infoHash)?.let { putExtra("streamPickKey", it) }
                                 (stream.name ?: stream.title)?.let { putExtra("streamPickName", it) }
                             }
@@ -154,6 +160,12 @@ fun StremioDetailScreen(
                                 stream.addonId?.let { putExtra("addonId", it) }
                                 putExtra("stremioType", type)
                                 putExtra("stremioId", stremioId)
+                                // Series context so the player's episode list,
+                                // next-episode and autoplay work for addon content.
+                                putExtra("stremioSeriesId", stremioId)
+                                state.selectedVideoSeason?.let { putExtra("seasonNumber", it) }
+                                state.selectedVideoEpisode?.let { putExtra("episodeNumber", it) }
+                                state.selectedVideoTitle?.let { putExtra("episodeTitle", it) }
                                 (stream.url ?: stream.infoHash)?.let { putExtra("streamPickKey", it) }
                                 (stream.name ?: stream.title)?.let { putExtra("streamPickName", it) }
                             }

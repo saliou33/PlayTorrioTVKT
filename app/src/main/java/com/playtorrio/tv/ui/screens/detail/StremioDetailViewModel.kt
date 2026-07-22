@@ -24,6 +24,10 @@ data class StremioDetailUiState(
     val showStreamOverlay: Boolean = false,
     val selectedVideoId: String? = null,
     val selectedVideoTitle: String? = null,
+    /** Season/episode of the video whose streams are shown — passed to the
+     *  player so its episode list / next-episode / autoplay work for addons. */
+    val selectedVideoSeason: Int? = null,
+    val selectedVideoEpisode: Int? = null,
     // Season grouping (series only)
     val selectedSeason: Int = 1,
     // TMDB redirect — if set, the screen should navigate to this route
@@ -236,6 +240,10 @@ class StremioDetailViewModel : ViewModel() {
     }
 
     fun loadStreamsForVideo(video: StremioVideo) {
+        _uiState.value = _uiState.value.copy(
+            selectedVideoSeason = video.season,
+            selectedVideoEpisode = video.episode,
+        )
         val inlineStreams = video.streams.orEmpty()
         if (inlineStreams.isNotEmpty()) {
             _uiState.value = _uiState.value.copy(
