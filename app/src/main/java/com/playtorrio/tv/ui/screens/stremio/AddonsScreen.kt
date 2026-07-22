@@ -53,8 +53,11 @@ fun AddonsScreen(navController: NavController) {
     var installing by remember { mutableStateOf(false) }
     var urlInput by remember { mutableStateOf("") }
     var configureQrUrl by remember { mutableStateOf<String?>(null) }
+    var editMode by remember { mutableStateOf(false) }
 
-    androidx.activity.compose.BackHandler(enabled = configureQrUrl != null) { configureQrUrl = null }
+    androidx.activity.compose.BackHandler(enabled = configureQrUrl != null || editMode) {
+        if (configureQrUrl != null) configureQrUrl = null else editMode = false
+    }
 
     fun refresh() { addons = StremioAddonRepository.getAddons() }
 
@@ -169,28 +172,59 @@ fun AddonsScreen(navController: NavController) {
                     color = Color.White.copy(0.5f), fontSize = 14.sp)
             }
         } else {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(22.dp)) {
-                items(listedAddons) { addon ->
-                    AddonSection(
+            // Card grid: click opens the addon's first catalog directly (the
+            // catalog screen's sidebar lists the rest). The Edit card toggles
+            // remove mode — same gesture as the Continue Watching row.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Installed", color = Color.White.copy(0.7f), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.width(10.dp))
+                if (editMode) {
+                    Text("select an addon to remove", color = DangerRed, fontSize = 11.sp)
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+                columns = androidx.compose.foundation.lazy.grid.GridCells.Adaptive(minSize = 150.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(bottom = 32.dp)
+            ) {
+                item(key = "__edit__") {
+                    AddonEditCard(active = editMode) { editMode = !editMode }
+                }
+                items(listedAddons.size, key = { listedAddons[it].manifest.id }) { i ->
+                    val addon = listedAddons[i]
+                    AddonCard(
                         addon = addon,
-                        onCatalog = { type, catalogId, title ->
-                            navController.navigate(
-                                "stremio_catalog/${Uri.encode(addon.manifest.id)}/${Uri.encode(type)}/" +
-                                    "${Uri.encode(catalogId)}/${Uri.encode(title)}"
-                            )
-                        },
-                        onAddonDirectory = { type, catalogId, title ->
-                            navController.navigate(
-                                "addon_directory/${Uri.encode(addon.manifest.id)}/${Uri.encode(type)}/" +
-                                    "${Uri.encode(catalogId)}/${Uri.encode(title)}"
-                            )
-                        },
-                        onConfigure = { configureQrUrl = "${addon.transportUrl}/configure" },
-                        onRemove = {
-                            scope.launch {
-                                StremioAddonRepository.removeAddon(addon.manifest.id)
-                                refresh()
-                                Toast.makeText(context, "Removed ${addon.manifest.name}", Toast.LENGTH_SHORT).show()
+                        editMode = editMode,
+                        onClick = {
+                            if (editMode) {
+                                scope.launch {
+                                    StremioAddonRepository.removeAddon(addon.manifest.id)
+                                    refresh()
+                                    if (StremioAddonRepository.getAddons().isEmpty()) editMode = false
+                                    Toast.makeText(context, "Removed ${addon.manifest.name}", Toast.LENGTH_SHORT).show()
+                                }
+                                return@AddonCard
+                            }
+                            val cat = addon.manifest.catalogs.firstOrNull()
+                            val dirCat = addon.manifest.addonCatalogs?.firstOrNull()
+                            when {
+                                cat != null -> navController.navigate(
+                                    "stremio_catalog/${Uri.encode(addon.manifest.id)}/${Uri.encode(cat.type)}/" +
+                                        "${Uri.encode(cat.id)}/${Uri.encode(addon.manifest.name)}"
+                                )
+                                dirCat != null -> navController.navigate(
+                                    "addon_directory/${Uri.encode(addon.manifest.id)}/${Uri.encode(dirCat.type)}/" +
+                                        "${Uri.encode(dirCat.id)}/${Uri.encode(addon.manifest.name)}"
+                                )
+                                addon.manifest.behaviorHints?.configurable == true ->
+                                    configureQrUrl = "${addon.transportUrl}/configure"
+                                else -> Toast.makeText(
+                                    context,
+                                    "${addon.manifest.name} provides streams only — used automatically during playback",
+                                    Toast.LENGTH_SHORT
+                                ).show()
                             }
                         }
                     )
@@ -245,95 +279,113 @@ fun AddonsScreen(navController: NavController) {
 }
 
 @Composable
-private fun AddonSection(
-    addon: InstalledAddon,
-    onCatalog: (type: String, id: String, title: String) -> Unit,
-    onAddonDirectory: (type: String, id: String, title: String) -> Unit,
-    onConfigure: () -> Unit,
-    onRemove: () -> Unit,
-) {
-    Column {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.Extension, null, tint = Accent, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text(addon.manifest.name, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.weight(1f))
-            PillButton(text = "Remove", icon = Icons.Filled.Delete, accent = DangerRed, enabled = true, onClick = onRemove)
-        }
-        Spacer(Modifier.height(10.dp))
-
-        // Addon directories (catalogs of OTHER addons, e.g. stremio-addons.net).
-        val addonCats = addon.manifest.addonCatalogs.orEmpty()
-        if (addonCats.isNotEmpty()) {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                items(addonCats) { cat ->
-                    var focused by remember { mutableStateOf(false) }
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(if (focused) Accent.copy(0.3f) else Accent.copy(0.12f))
-                            .border(if (focused) 2.dp else 1.dp, if (focused) Accent else Accent.copy(0.4f), RoundedCornerShape(10.dp))
-                            .onFocusChanged { focused = it.isFocused }
-                            .clickable {
-                                onAddonDirectory(cat.type, cat.id, "${addon.manifest.name} · ${cat.name.ifBlank { cat.id }}")
-                            }
-                            .padding(horizontal = 16.dp, vertical = 12.dp)
-                    ) {
-                        Text("Browse addons · ${cat.name.ifBlank { cat.id }}",
-                            color = if (focused) Color.White else Accent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    }
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-        }
-
-        val catalogs = addon.manifest.catalogs
-        val configurable = addon.manifest.behaviorHints?.configurable == true
-        if (catalogs.isEmpty() && addonCats.isEmpty()) {
-            if (configurable) {
-                // e.g. Comet / MediaFusion / AIOStreams public instances: the base
-                // manifest has no catalogs until configured per-user.
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Needs setup to unlock catalogs/streams.", color = Color.White.copy(0.5f), fontSize = 12.sp)
-                    var focused by remember { mutableStateOf(false) }
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(if (focused) Accent.copy(0.35f) else Accent.copy(0.15f))
-                            .border(if (focused) 2.dp else 1.dp, if (focused) Accent else Accent.copy(0.5f), RoundedCornerShape(8.dp))
-                            .onFocusChanged { focused = it.isFocused }
-                            .clickable { onConfigure() }
-                            .padding(horizontal = 12.dp, vertical = 8.dp)
-                    ) {
-                        Text("Set up (QR)", color = Accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-            } else {
-                Text("Streams only — no browsable catalogs.", color = Color.White.copy(0.4f), fontSize = 12.sp)
-            }
-        } else if (catalogs.isEmpty()) {
-            // Directory-only addon (handled above) — nothing more to show.
-        } else {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                items(catalogs) { cat ->
-                    var focused by remember { mutableStateOf(false) }
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(if (focused) Color.White.copy(0.15f) else Surface)
-                            .border(if (focused) 2.dp else 1.dp, if (focused) Accent else Color.White.copy(0.1f), RoundedCornerShape(10.dp))
-                            .onFocusChanged { focused = it.isFocused }
-                            .clickable { onCatalog(cat.type, cat.id, "${addon.manifest.name} · ${cat.name.ifBlank { cat.id }}") }
-                            .padding(horizontal = 16.dp, vertical = 12.dp)
-                    ) {
-                        Text("${cat.name.ifBlank { cat.id }} · ${cat.type}",
-                            color = if (focused) Color.White else Color.White.copy(0.85f), fontSize = 13.sp)
-                    }
-                }
-            }
-        }
+private fun AddonEditCard(active: Boolean, onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+        modifier = Modifier
+            .height(150.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (active) DangerRed.copy(0.18f) else Surface)
+            .border(
+                if (focused) 2.dp else 1.dp,
+                when {
+                    focused -> if (active) DangerRed else Accent
+                    active -> DangerRed.copy(0.6f)
+                    else -> Color.White.copy(0.1f)
+                },
+                RoundedCornerShape(14.dp)
+            )
+            .onFocusChanged { focused = it.isFocused }
+            .clickable { onClick() }
+            .padding(12.dp)
+    ) {
+        Icon(
+            Icons.Filled.Delete, null,
+            tint = if (active) DangerRed else Color.White.copy(0.7f),
+            modifier = Modifier.size(28.dp)
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            if (active) "Done" else "Edit",
+            color = if (active) DangerRed else Color.White.copy(0.8f),
+            fontSize = 13.sp, fontWeight = FontWeight.Bold
+        )
+        Spacer(Modifier.height(2.dp))
+        Text(
+            if (active) "exit remove mode" else "remove addons",
+            color = Color.White.copy(0.45f), fontSize = 10.sp
+        )
     }
 }
+
+@Composable
+private fun AddonCard(addon: InstalledAddon, editMode: Boolean, onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    val m = addon.manifest
+    val subtitle = when {
+        m.catalogs.isNotEmpty() -> {
+            val types = m.catalogs.map { it.type }.distinct().take(2).joinToString("/")
+            "${m.catalogs.size} catalog${if (m.catalogs.size != 1) "s" else ""} · $types"
+        }
+        !m.addonCatalogs.isNullOrEmpty() -> "Addon directory"
+        m.behaviorHints?.configurable == true -> "Needs setup"
+        else -> "Streams only"
+    }
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .height(150.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (focused) Color.White.copy(0.12f) else Surface)
+            .border(
+                if (focused) 2.dp else 1.dp,
+                when {
+                    editMode -> DangerRed.copy(if (focused) 1f else 0.5f)
+                    focused -> Accent
+                    else -> Color.White.copy(0.1f)
+                },
+                RoundedCornerShape(14.dp)
+            )
+            .onFocusChanged { focused = it.isFocused }
+            .clickable { onClick() }
+            .padding(12.dp)
+    ) {
+        Box(
+            Modifier
+                .size(56.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color.White.copy(0.06f)),
+            contentAlignment = Alignment.Center
+        ) {
+            if (!m.logo.isNullOrBlank()) {
+                coil.compose.AsyncImage(
+                    model = m.logo,
+                    contentDescription = m.name,
+                    contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize().padding(6.dp)
+                )
+            } else {
+                Icon(Icons.Filled.Extension, null, tint = Accent, modifier = Modifier.size(28.dp))
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            m.name,
+            color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+            maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+        )
+        Spacer(Modifier.height(2.dp))
+        Text(
+            if (editMode) "click to remove" else subtitle,
+            color = if (editMode) DangerRed else Color.White.copy(0.5f),
+            fontSize = 10.sp, maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+        )
+    }
+}
+
 
 @Composable
 private fun PillButton(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector, accent: Color, enabled: Boolean, onClick: () -> Unit) {
