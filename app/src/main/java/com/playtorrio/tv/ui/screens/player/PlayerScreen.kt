@@ -2637,10 +2637,43 @@ private fun EpisodesPanel(state: PlayerUiState, viewModel: PlayerViewModel) {
                     .padding(horizontal = 20.dp, vertical = 24.dp)
             ) {
                 Text(
-                    text = "Season ${state.seasonNumber ?: ""}",
+                    text = "Season ${state.browseSeason ?: state.seasonNumber ?: ""}",
                     style = MaterialTheme.typography.headlineSmall,
                     color = Color.White
                 )
+                // Season tabs — switch season without leaving the player.
+                if (state.availableSeasons.size > 1) {
+                    Spacer(Modifier.height(8.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(state.availableSeasons.size) { i ->
+                            val season = state.availableSeasons[i]
+                            val selected = season == (state.browseSeason ?: state.seasonNumber)
+                            var chipFocused by remember { mutableStateOf(false) }
+                            Text(
+                                text = "S$season",
+                                color = when {
+                                    selected -> AccentColor
+                                    chipFocused -> Color.White
+                                    else -> Color.White.copy(alpha = 0.6f)
+                                },
+                                fontSize = 12.sp,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(
+                                        when {
+                                            selected -> AccentColor.copy(alpha = 0.2f)
+                                            chipFocused -> Color.White.copy(alpha = 0.15f)
+                                            else -> Color.White.copy(alpha = 0.06f)
+                                        }
+                                    )
+                                    .onFocusChanged { chipFocused = it.isFocused }
+                                    .clickable { viewModel.browseEpisodeSeason(season) }
+                                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
+                }
                 Spacer(Modifier.height(4.dp))
                 Text(
                     text = "${state.episodes.size} episodes",

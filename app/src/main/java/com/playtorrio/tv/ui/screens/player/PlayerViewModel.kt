@@ -209,6 +209,11 @@ data class PlayerUiState(
     val episodes: List<com.playtorrio.tv.data.model.Episode> = emptyList(),
     val isLoadingEpisodes: Boolean = false,
     val showEpisodesPanel: Boolean = false,
+    /** All seasons of the series (for the panel's season tabs). */
+    val availableSeasons: List<Int> = emptyList(),
+    /** Season currently shown in the episodes panel — may differ from the
+     *  playing one while the user browses. */
+    val browseSeason: Int? = null,
     val nextEpisode: com.playtorrio.tv.data.model.Episode? = null,
     val isSwitchingEpisode: Boolean = false,
     /** Auto-play the next episode when the current one ends. Session mirror of
@@ -725,11 +730,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     is com.playtorrio.tv.data.stremio.StreamRoute.DirectUrl -> {
                         val referer = route.headers?.get("Referer") ?: route.headers?.get("referer") ?: ""
                         customStreamHeaders = route.headers ?: emptyMap()
+                        val mime = probeStreamMime(route.url, customStreamHeaders)
                         withContext(Dispatchers.Main) {
                             addedExternalSubConfigs.clear(); addedExternalSubLabels.clear()
                             player?.release(); player = null
                             _uiState.update { it.copy(isSwitchingEpisode = false, isStreamingMode = true, isMagnet = false, torrentHash = null) }
-                            if (referer.isNotBlank()) createStreamingPlayer(route.url, referer) else createPlayer(route.url)
+                            if (referer.isNotBlank()) createStreamingPlayer(route.url, referer, mimeType = mime) else createPlayer(route.url, mimeType = mime)
                         }
                     }
                     is com.playtorrio.tv.data.stremio.StreamRoute.Torrent -> {
@@ -953,6 +959,67 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private fun setSourceStatus(idx: Int, status: String) {
         _uiState.update { it.copy(sourceStatus = it.sourceStatus + (idx to status)) }
     }
+
+    private val KNOWN_MEDIA_EXTENSIONS = listOf(
+        ".m3u8", ".mpd", ".mp4", ".mkv", ".webm", ".ts", ".avi", ".mov", ".m4v", ".flv"
+    )
+
+    /**
+     * Addon streams are often extension-less redirectors (e.g. NoTorrent's
+     * /redirect?p=…), so Media3 can't infer the container from the URI and
+     * treats an HLS playlist as a progressive file — parse failure + endless
+     * retry. Follow redirects with a tiny ranged GET, look at the final
+     * content-type (and sniff #EXTM3U), and return an explicit mime type.
+     * Returns null for URLs with a recognizable extension or on any failure.
+     */
+    private suspend fun probeStreamMime(url: String, headers: Map<String, String>): String? =
+        withContext(Dispatchers.IO) {
+            val path = android.net.Uri.parse(url).path?.lowercase().orEmpty()
+            if (KNOWN_MEDIA_EXTENSIONS.any { path.endsWith(it) }) return@withContext null
+            runCatching {
+                var cur = url
+                var hops = 0
+                while (hops < 6) {
+                    val conn = (java.net.URL(cur).openConnection() as java.net.HttpURLConnection).apply {
+                        requestMethod = "GET"
+                        setRequestProperty("Range", "bytes=0-1023")
+                        headers.forEach { (k, v) -> setRequestProperty(k, v) }
+                        if (headers.keys.none { it.equals("User-Agent", true) }) {
+                            setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36")
+                        }
+                        connectTimeout = 8_000; readTimeout = 8_000
+                        instanceFollowRedirects = false
+                    }
+                    val code = conn.responseCode
+                    if (code in 300..399) {
+                        val loc = conn.getHeaderField("Location") ?: return@runCatching null
+                        cur = java.net.URL(java.net.URL(cur), loc).toString()
+                        conn.disconnect()
+                        hops++
+                        continue
+                    }
+                    val ct = conn.contentType?.lowercase().orEmpty()
+                    val head = runCatching {
+                        conn.inputStream.use { ins ->
+                            val buf = ByteArray(16)
+                            val n = ins.read(buf)
+                            if (n > 0) String(buf, 0, n) else ""
+                        }
+                    }.getOrDefault("")
+                    conn.disconnect()
+                    val finalPath = android.net.Uri.parse(cur).path?.lowercase().orEmpty()
+                    return@runCatching when {
+                        ct.contains("mpegurl") || head.startsWith("#EXTM3U") ||
+                            finalPath.endsWith(".m3u8") -> MimeTypes.APPLICATION_M3U8
+                        ct.contains("dash+xml") || finalPath.endsWith(".mpd") -> MimeTypes.APPLICATION_MPD
+                        else -> null
+                    }
+                }
+                null
+            }.getOrNull().also {
+                if (it != null) Log.i(TAG, "Probed stream mime: $it for extension-less URL")
+            }
+        }
 
     private fun parseHeadersJson(json: String?): Map<String, String> {
         if (json.isNullOrBlank()) return emptyMap()
@@ -1260,7 +1327,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private fun createPlayer(streamUrl: String) {
+    private fun createPlayer(streamUrl: String, mimeType: String? = null) {
         val context = getApplication<Application>()
         resetStartupRetryState()
 
@@ -1323,7 +1390,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         exo.setPlaybackSpeed(_uiState.value.playbackSpeed)
 
         Log.d(TAG, "Creating player with stream URL: $streamUrl")
-        val mediaItem = MediaItem.fromUri(streamUrl)
+        val mediaItem = MediaItem.Builder().setUri(streamUrl)
+            .apply { mimeType?.let { setMimeType(it) } }
+            .build()
         exo.setMediaItem(mediaItem)
         exo.prepare()
         exo.playWhenReady = true
@@ -2220,6 +2289,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     launch { loadEpisodesForCurrentSeries() }
                 }
             }
+            // Extension-less addon redirector URLs need an explicit mime type
+            // (Media3 would misread an HLS playlist as a progressive file).
+            val probedMime = if (!isIptv) probeStreamMime(streamUrl, customStreamHeaders) else null
             withContext(Dispatchers.Main) {
                 if (isIptv) {
                     createIptvPlayer(streamUrl, referer)
@@ -2229,6 +2301,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         referer = referer,
                         animeTracksJson = animeTracksJson,
                         animeOrigin = animeOrigin,
+                        mimeType = probedMime,
                     )
                 }
             }
@@ -2241,6 +2314,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         referer: String,
         animeTracksJson: String? = null,
         animeOrigin: String? = null,
+        mimeType: String? = null,
     ) {
         val context = getApplication<Application>()
         resetStartupRetryState()
@@ -2350,6 +2424,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         autoQualityAppliedForUrl = null
         // Let ExoPlayer auto-detect from Content-Type header.
         val mediaItemBuilder = MediaItem.Builder().setUri(streamUrl)
+            .apply { mimeType?.let { setMimeType(it) } }
 
         if (!animeTracksJson.isNullOrBlank()) {
             try {
@@ -3157,12 +3232,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         currentMagnetUri = null
                         val referer = route.headers?.get("Referer") ?: route.headers?.get("referer") ?: ""
                         customStreamHeaders = route.headers ?: emptyMap()
+                        val mime = probeStreamMime(route.url, customStreamHeaders)
                         withContext(Dispatchers.Main) {
                             addedExternalSubConfigs.clear(); addedExternalSubLabels.clear()
                             player?.release(); player = null
                             pendingSeekMs = resumePos
                             _uiState.update { it.copy(isSwitchingSource = false, isStreamingMode = true, isMagnet = false, torrentHash = null) }
-                            if (referer.isNotBlank()) createStreamingPlayer(route.url, referer) else createPlayer(route.url)
+                            if (referer.isNotBlank()) createStreamingPlayer(route.url, referer, mimeType = mime) else createPlayer(route.url, mimeType = mime)
                         }
                     }
                     is com.playtorrio.tv.data.stremio.StreamRoute.Torrent -> {
@@ -3405,9 +3481,17 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         showControls()
     }
 
-    fun loadEpisodesForCurrentSeries() {
+    /** Switch the episodes panel to another season without leaving the player. */
+    fun browseEpisodeSeason(season: Int) {
+        if (_uiState.value.browseSeason == season && _uiState.value.episodes.isNotEmpty()) return
+        _uiState.update { it.copy(browseSeason = season, episodes = emptyList()) }
+        loadEpisodesForCurrentSeries(season)
+    }
+
+    fun loadEpisodesForCurrentSeries(browse: Int? = null) {
         val s = _uiState.value
         if (s.isLoadingEpisodes) return
+        val targetSeason = browse ?: s.browseSeason ?: s.seasonNumber
 
         // Anime episodes come from AniList (Anikoto), not TMDB.
         val animeId = resumeAnimeId?.toIntOrNull()
@@ -3449,8 +3533,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         id = seriesId,
                         preferredAddonId = resumeAddonId
                     )
-                    val curSeason = s.seasonNumber
-                    val eps = meta?.videos.orEmpty()
+                    val videos = meta?.videos.orEmpty()
+                    val seasons = videos.mapNotNull { it.season }.filter { it > 0 }.distinct().sorted()
+                    val curSeason = targetSeason ?: seasons.firstOrNull()
+                    val eps = videos
                         .filter { v -> v.episode != null && (curSeason == null || v.season == null || v.season == curSeason) }
                         .sortedBy { it.episode }
                         .map { v ->
@@ -3463,7 +3549,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                                 seasonNumber = v.season ?: curSeason ?: 1,
                             )
                         }
-                    _uiState.update { it.copy(episodes = eps, isLoadingEpisodes = false) }
+                    _uiState.update {
+                        it.copy(
+                            episodes = eps,
+                            isLoadingEpisodes = false,
+                            availableSeasons = seasons,
+                            browseSeason = curSeason,
+                        )
+                    }
                     computeNextEpisode()
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to load addon episodes", e)
@@ -3474,15 +3567,25 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         val tvId = s.tmdbId.takeIf { it > 0 } ?: return
-        val season = s.seasonNumber ?: return
+        val season = targetSeason ?: return
         _uiState.update { it.copy(isLoadingEpisodes = true) }
         viewModelScope.launch {
             try {
+                // Seasons list for the panel tabs (fetched once).
+                if (_uiState.value.availableSeasons.isEmpty()) {
+                    val seasons = runCatching {
+                        TmdbClient.api.getTvDetails(tvId, TmdbClient.API_KEY).seasons
+                            ?.mapNotNull { it.seasonNumber }?.filter { it > 0 }?.sorted()
+                    }.getOrNull().orEmpty()
+                    if (seasons.isNotEmpty()) {
+                        _uiState.update { it.copy(availableSeasons = seasons) }
+                    }
+                }
                 val seasonData = TmdbClient.api.getTvSeason(tvId, season, TmdbClient.API_KEY)
                 val eps = (seasonData.episodes ?: emptyList()).map {
                     if (it.seasonNumber == null) it.copy(seasonNumber = season) else it
                 }
-                _uiState.update { it.copy(episodes = eps, isLoadingEpisodes = false) }
+                _uiState.update { it.copy(episodes = eps, isLoadingEpisodes = false, browseSeason = season) }
                 computeNextEpisode()
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to load season episodes", e)
@@ -3492,11 +3595,17 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun computeNextEpisode() {
-        // Re-arm the Up Next overlay for the (possibly new) current episode.
-        resetUpNextForNewItem()
         val s = _uiState.value
         val curEp = s.episodeNumber ?: return
-        val next = s.episodes.firstOrNull { it.episodeNumber == curEp + 1 }
+        // While the panel is browsing a DIFFERENT season, keep the existing
+        // next-episode (don't clobber Up Next with unrelated episodes).
+        val sameSeason = s.episodes.filter {
+            it.seasonNumber == null || s.seasonNumber == null || it.seasonNumber == s.seasonNumber
+        }
+        if (sameSeason.isEmpty() && s.episodes.isNotEmpty()) return
+        // Re-arm the Up Next overlay for the (possibly new) current episode.
+        resetUpNextForNewItem()
+        val next = sameSeason.firstOrNull { it.episodeNumber == curEp + 1 }
         _uiState.update { it.copy(nextEpisode = next) }
     }
 
@@ -3513,6 +3622,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         // Anime: resolve the episode via AniList sources (no TMDB extraction).
         if (resumeAnimeId != null) {
             switchToAnimeEpisode(episode.episodeNumber)
+            return
+        }
+
+        // Addon-origin content (direct OR torrent): clicking an episode opens
+        // the source picker with the addon's streams for that episode. The
+        // streaming-mode branch below would silently no-op (it needs a TMDB id).
+        if (s.isAddonOrigin || (resumeAddonId != null && resumeStremioType != null)) {
+            openEpisodeSourceOverlay(episode, EpisodeOverlayKind.ADDON_STREAM)
             return
         }
 
@@ -3771,6 +3888,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 if (!oldHash.isNullOrBlank()) {
                     runCatching { com.playtorrio.tv.data.torrent.TorrServerService.removeTorrent(oldHash) }
                 }
+                val mime = probeStreamMime(url, customStreamHeaders)
                 withContext(Dispatchers.Main) {
                     addedExternalSubConfigs.clear()
                     addedExternalSubLabels.clear()
@@ -3779,9 +3897,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     _uiState.update { it.copy(isSwitchingEpisode = false, torrentHash = null) }
                     val referer = headers?.get("Referer") ?: headers?.get("referer") ?: ""
                     if (referer.isNotBlank()) {
-                        createStreamingPlayer(url, referer)
+                        createStreamingPlayer(url, referer, mimeType = mime)
                     } else {
-                        createPlayer(url)
+                        createPlayer(url, mimeType = mime)
                     }
                 }
                 refetchSubsAndSkipForEpisode(episode)
