@@ -953,10 +953,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private fun tryNextSource(reason: String) {
         val state = _uiState.value
 
-        // Addon-origin streams have no TMDB id, so the streaming extractor can
-        // never produce an alternative ("trying Xpass…" forever). Reconnect the
-        // SAME stream instead of cycling extractor sources.
-        val addonOrigin = state.isStreamingMode && state.tmdbId <= 0 && state.animeEmbeds == null && !state.isIptv
+        // Addon-origin streams (the user picked a specific addon stream — even
+        // for a TMDB title) must never be silently replaced by extractor sources
+        // like Xpass. Reconnect the SAME stream instead; the user can switch via
+        // the addon-aware sources panel.
+        val addonOrigin = state.isStreamingMode && state.animeEmbeds == null && !state.isIptv &&
+            (state.isAddonOrigin || state.tmdbId <= 0)
 
         // Respect a manual source choice: don't jump to another source. Mark it
         // and keep reconnecting the SAME source (resilient, never gives up).

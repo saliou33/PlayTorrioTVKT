@@ -295,7 +295,17 @@ object StremioService {
                 }.getOrDefault(emptyList())
             }
         }
-        jobs.awaitAll().flatten()
+        // Several addons commonly return the SAME torrent (identical infoHash +
+        // file) or the same direct URL — collapse those so the stream lists
+        // aren't full of near-identical rows. First occurrence wins, and the
+        // preferred addon's results are ordered first by buildCandidates.
+        var anonKey = 0
+        jobs.awaitAll().flatten().distinctBy { s ->
+            s.infoHash?.lowercase()?.let { "ih:$it:${s.fileIdx ?: -1}" }
+                ?: s.url?.let { "url:$it" }
+                ?: s.externalUrl?.let { "ext:$it" }
+                ?: "anon:${anonKey++}"
+        }
     }
 
     // ── Subtitles ─────────────────────────────────────────────────────────────
