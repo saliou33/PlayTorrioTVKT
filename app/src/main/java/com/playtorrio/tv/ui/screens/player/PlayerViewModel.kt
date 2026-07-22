@@ -1175,7 +1175,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         context = context,
                         magnetUri = magnetUri,
                         seasonNumber = seasonNumber,
-                        episodeNumber = episodeNumber
+                        episodeNumber = episodeNumber,
+                        onStatus = { msg -> _uiState.update { it.copy(connectionStatus = msg) } }
                     )
 
                     _uiState.update {

@@ -209,7 +209,8 @@ object TorrServerService {
         magnetUri: String,
         seasonNumber: Int? = null,
         episodeNumber: Int? = null,
-        fileIdx: Int? = null
+        fileIdx: Int? = null,
+        onStatus: (String) -> Unit = {}
     ): StreamResult = withContext(Dispatchers.IO) {
         Log.d(TAG, "startStreaming called, season=$seasonNumber, episode=$episodeNumber")
         ensureInitialized(context)
@@ -221,12 +222,14 @@ object TorrServerService {
 
         // Step 1: Add torrent
         Log.d(TAG, "Adding torrent...")
+        onStatus("Adding torrent…")
         addTorrentWithRetry(torrentsUrl, boosted, hash)
         Log.d(TAG, "Torrent added")
 
         // Step 2: Resolve file index
         Log.d(TAG, "Resolving file index...")
-        val fileInfo = resolveFileIndex(torrentsUrl, hash, seasonNumber, episodeNumber, fileIdx)
+        onStatus("Finding peers…")
+        val fileInfo = resolveFileIndex(torrentsUrl, hash, seasonNumber, episodeNumber, fileIdx, onStatus)
             ?: throw Exception("No video file found in torrent")
         Log.d(TAG, "Resolved file: ${fileInfo.filename} (idx=${fileInfo.index}, size=${fileInfo.size})")
 
@@ -286,9 +289,11 @@ object TorrServerService {
         hash: String,
         season: Int?,
         episode: Int?,
-        preferredIdx: Int?
+        preferredIdx: Int?,
+        onStatus: (String) -> Unit = {}
     ): FileInfo? {
         val deadline = System.currentTimeMillis() + 30_000
+        var lastStatusAt = 0L
 
         while (System.currentTimeMillis() < deadline) {
             try {
@@ -300,7 +305,21 @@ object TorrServerService {
 
                 val data = JSONObject(body)
                 val rawFiles = data.optJSONArray("file_stats") ?: data.optJSONArray("files")
-                if (rawFiles == null || rawFiles.length() == 0) { Thread.sleep(250); continue }
+                if (rawFiles == null || rawFiles.length() == 0) {
+                    // The slow part is magnet metadata resolution — surface live
+                    // peer counts (~1/s) so the wait doesn't look frozen.
+                    val now = System.currentTimeMillis()
+                    if (now - lastStatusAt > 1_000L) {
+                        lastStatusAt = now
+                        val peers = data.optInt("active_peers", -1)
+                            .takeIf { it > 0 } ?: data.optInt("connected_seeders", -1)
+                        onStatus(
+                            if (peers > 0) "Fetching torrent info… $peers peers"
+                            else "Fetching torrent info…"
+                        )
+                    }
+                    Thread.sleep(250); continue
+                }
 
                 var bestIdx: Int? = null
                 var bestName: String? = null
