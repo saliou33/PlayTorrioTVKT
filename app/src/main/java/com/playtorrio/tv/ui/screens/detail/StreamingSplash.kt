@@ -185,8 +185,27 @@ fun StreamingSplash(
                 context.startActivity(intent)
                 onDismiss()
             } else {
-                statusText = "Could not find a stream. Please try again."
-                isError = true
+                // All extractor sources failed — before giving up, fall back to
+                // the installed Stremio addons (NoTorrent, Torrentio, …) for this
+                // title and play the first usable stream.
+                statusText = "Checking addon streams…"
+                val played = runCatching {
+                    playFirstAddonStream(
+                        context = context,
+                        tmdbId = tmdbId, isMovie = isMovie, imdbIdHint = imdbId,
+                        seasonNumber = seasonNumber, episodeNumber = episodeNumber,
+                        title = title, logoUrl = logoUrl, backdropUrl = backdropUrl,
+                        posterUrl = posterUrl, year = year, rating = rating,
+                        overview = overview, episodeTitle = episodeTitle,
+                        resumePositionMs = resumePositionMs,
+                    )
+                }.getOrDefault(false)
+                if (played) {
+                    onDismiss()
+                } else {
+                    statusText = "Could not find a stream. Please try again."
+                    isError = true
+                }
             }
         }
 
@@ -261,4 +280,88 @@ fun StreamingSplash(
             }
         }
     }
+}
+
+/**
+ * Last-resort fallback when every extractor source fails: query the installed
+ * Stremio addons for this title (episode-aware for series) and launch the first
+ * playable stream. Returns false when no addon has anything either.
+ */
+private suspend fun playFirstAddonStream(
+    context: android.content.Context,
+    tmdbId: Int,
+    isMovie: Boolean,
+    imdbIdHint: String?,
+    seasonNumber: Int?,
+    episodeNumber: Int?,
+    title: String,
+    logoUrl: String?,
+    backdropUrl: String?,
+    posterUrl: String?,
+    year: String?,
+    rating: String?,
+    overview: String?,
+    episodeTitle: String?,
+    resumePositionMs: Long?,
+): Boolean {
+    val api = com.playtorrio.tv.data.api.TmdbClient.api
+    val key = com.playtorrio.tv.data.api.TmdbClient.API_KEY
+    val imdb = imdbIdHint?.takeIf { it.startsWith("tt") }
+        ?: runCatching {
+            if (isMovie) api.getMovieExternalIds(tmdbId, key).imdbId
+            else api.getTvExternalIds(tmdbId, key).imdbId
+        }.getOrNull()?.takeIf { it.startsWith("tt") }
+        ?: return false
+
+    val sid = if (!isMovie && seasonNumber != null && episodeNumber != null)
+        "$imdb:$seasonNumber:$episodeNumber" else imdb
+    val type = if (isMovie) "movie" else "series"
+    val addons = com.playtorrio.tv.data.stremio.StremioAddonRepository.getAddons()
+    val streams = com.playtorrio.tv.data.stremio.StremioService.getStreams(addons, type, sid)
+
+    fun baseIntent() = Intent(context, PlayerActivity::class.java).apply {
+        putExtra("title", title)
+        putExtra("logoUrl", logoUrl)
+        putExtra("backdropUrl", backdropUrl)
+        putExtra("posterUrl", posterUrl)
+        putExtra("year", year)
+        putExtra("rating", rating)
+        putExtra("overview", overview)
+        putExtra("isMovie", isMovie)
+        seasonNumber?.let { putExtra("seasonNumber", it) }
+        episodeNumber?.let { putExtra("episodeNumber", it) }
+        putExtra("episodeTitle", episodeTitle)
+        putExtra("tmdbId", tmdbId)
+        putExtra("imdbId", imdb)
+        putExtra("stremioType", type)
+        putExtra("stremioId", sid)
+        resumePositionMs?.let { putExtra("resumePositionMs", it) }
+    }
+
+    for (stream in streams) {
+        when (val route = com.playtorrio.tv.data.stremio.StremioService.routeStream(stream)) {
+            is com.playtorrio.tv.data.stremio.StreamRoute.DirectUrl -> {
+                context.startActivity(baseIntent().apply {
+                    putExtra("streamUrl", route.url)
+                    putExtra("streamReferer", route.headers?.get("Referer") ?: "")
+                    stream.addonId?.let { putExtra("addonId", it) }
+                    (stream.url ?: stream.infoHash)?.let { putExtra("streamPickKey", it) }
+                    (stream.name ?: stream.title)?.let { putExtra("streamPickName", it) }
+                })
+                return true
+            }
+            is com.playtorrio.tv.data.stremio.StreamRoute.Torrent -> {
+                context.startActivity(baseIntent().apply {
+                    putExtra("magnetUri", route.magnet)
+                    route.fileIdx?.let { putExtra("fileIdx", it) }
+                    stream.addonId?.let { putExtra("addonId", it) }
+                    (stream.url ?: stream.infoHash)?.let { putExtra("streamPickKey", it) }
+                    (stream.name ?: stream.title)?.let { putExtra("streamPickName", it) }
+                })
+                return true
+            }
+            else -> continue
+        }
+    }
+    return false
 }

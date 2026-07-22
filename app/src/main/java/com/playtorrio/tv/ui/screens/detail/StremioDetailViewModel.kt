@@ -51,12 +51,23 @@ class StremioDetailViewModel : ViewModel() {
             try {
                 val addons = StremioAddonRepository.getAddons()
                 val preferredAddon = currentAddonId.takeIf { it != "_auto_" }
-                val meta = StremioService.getMeta(
+                var meta = StremioService.getMeta(
                     addons = addons,
                     type = type,
                     id = stremioId,
                     preferredAddonId = preferredAddon
                 )
+                if (meta == null) {
+                    // One retry — a flaky Cinemeta timeout here caused a silent
+                    // redirect to the TMDB detail page, losing the addon context
+                    // (episode clicks there use extractors instead of the addon).
+                    meta = StremioService.getMeta(
+                        addons = addons,
+                        type = type,
+                        id = stremioId,
+                        preferredAddonId = preferredAddon
+                    )
+                }
                 if (meta != null) {
                     val defaultSeason = meta.videos
                         ?.mapNotNull { it.season }
