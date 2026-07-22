@@ -70,6 +70,10 @@ fun DetailScreen(
     mediaId: Int,
     isMovie: Boolean,
     navController: NavController,
+    /** True when redirected here from an addon item. Addon content shouldn't
+     *  care about stream/torrent mode: play always opens the source picker
+     *  (torrents + addon streams) instead of auto-racing the extractors. */
+    fromAddon: Boolean = false,
     viewModel: DetailViewModel = viewModel()
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -98,7 +102,7 @@ fun DetailScreen(
         when {
             state.isLoading -> DetailLoading()
             state.error != null -> DetailError(state.error!!)
-            else -> DetailContent(state, navController, viewModel, mediaId)
+            else -> DetailContent(state, navController, viewModel, mediaId, fromAddon)
         }
 
         // Torrent overlay on top of everything
@@ -262,7 +266,8 @@ private fun DetailContent(
     state: DetailUiState,
     navController: NavController,
     viewModel: DetailViewModel,
-    mediaId: Int
+    mediaId: Int,
+    fromAddon: Boolean = false
 ) {
     val scrollState = rememberScrollState()
     val coroutineScope = rememberCoroutineScope()
@@ -374,7 +379,7 @@ private fun DetailContent(
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Card(
                             onClick = {
-                                if (AppPreferences.streamingMode) viewModel.showStreamingSplashForMovie()
+                                if (AppPreferences.streamingMode && !fromAddon) viewModel.showStreamingSplashForMovie()
                                 else viewModel.searchTorrentsForMovie()
                             },
                             modifier = Modifier
@@ -792,7 +797,7 @@ private fun DetailContent(
                     episodes = state.episodes,
                     isLoading = state.isLoadingEpisodes,
                     onEpisodeClick = { episode ->
-                        if (AppPreferences.streamingMode) viewModel.showStreamingSplashForEpisode(episode)
+                        if (AppPreferences.streamingMode && !fromAddon) viewModel.showStreamingSplashForEpisode(episode)
                         else viewModel.searchTorrentsForEpisode(episode)
                     }
                 )

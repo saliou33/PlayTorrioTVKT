@@ -28,7 +28,10 @@ object StremioService {
 
     private const val TAG = "StremioService"
     private const val CATALOG_TIMEOUT_MS = 10_000L
-    private const val STREAM_TIMEOUT_MS  = 15_000L
+    // Generous — slow public instances (Torrentio under load) regularly need
+    // >15s. Callers see results progressively via onPartial, so the slowest
+    // addon no longer delays the others' display.
+    private const val STREAM_TIMEOUT_MS  = 25_000L
     private const val META_TIMEOUT_MS    = 10_000L
 
     private val gson = GsonBuilder()
@@ -301,14 +304,25 @@ object StremioService {
         addons: List<InstalledAddon>,
         type: String,
         id: String,
-        preferredAddonId: String? = null
+        preferredAddonId: String? = null,
+        /** Invoked with the accumulated (deduped) list each time one addon
+         *  finishes — lets UIs show fast addons immediately instead of waiting
+         *  for the slowest one. */
+        onPartial: ((List<StremioStream>) -> Unit)? = null
     ): List<StremioStream> = coroutineScope {
         val candidates = buildCandidates(addons, "stream", type, id, preferredAddonId)
         val encodedType = encodePathSegment(type)
         val encodedId = encodePathSegment(id)
-        val jobs = candidates.map { addon ->
+        // Per-addon results kept in candidate order so the preferred addon's
+        // streams stay first regardless of response order.
+        val perAddon = arrayOfNulls<List<StremioStream>>(candidates.size)
+        val lock = Any()
+        fun snapshot(): List<StremioStream> = dedupeStreams(
+            perAddon.filterNotNull().flatten()
+        )
+        val jobs = candidates.mapIndexed { i, addon ->
             async {
-                runCatching {
+                val result = runCatching {
                     withTimeoutOrNull(STREAM_TIMEOUT_MS) {
                         val url = "${addon.transportUrl}/stream/$encodedType/$encodedId.json"
                         val body = get(url) ?: return@withTimeoutOrNull emptyList()
@@ -321,14 +335,28 @@ object StremioService {
                         } ?: emptyList()
                     } ?: emptyList()
                 }.getOrDefault(emptyList())
+                if (onPartial != null && result.isNotEmpty()) {
+                    val snap = synchronized(lock) {
+                        perAddon[i] = result
+                        snapshot()
+                    }
+                    onPartial(snap)
+                } else {
+                    synchronized(lock) { perAddon[i] = result }
+                }
+                result
             }
         }
-        // Several addons commonly return the SAME torrent (identical infoHash +
-        // file) or the same direct URL — collapse those so the stream lists
-        // aren't full of near-identical rows. First occurrence wins, and the
-        // preferred addon's results are ordered first by buildCandidates.
+        jobs.awaitAll()
+        snapshot()
+    }
+
+    /** Several addons commonly return the SAME torrent (identical infoHash +
+     *  file) or the same direct URL — collapse those so the stream lists
+     *  aren't full of near-identical rows. First occurrence wins. */
+    private fun dedupeStreams(streams: List<StremioStream>): List<StremioStream> {
         var anonKey = 0
-        jobs.awaitAll().flatten().distinctBy { s ->
+        return streams.distinctBy { s ->
             s.infoHash?.lowercase()?.let { "ih:$it:${s.fileIdx ?: -1}" }
                 ?: s.url?.let { "url:$it" }
                 ?: s.externalUrl?.let { "ext:$it" }

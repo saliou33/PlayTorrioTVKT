@@ -156,15 +156,17 @@ class MainActivity : ComponentActivity() {
                         ReaderScreen(navController = navController)
                     }
                     composable(
-                        "detail/{mediaId}/{isMovie}",
+                        "detail/{mediaId}/{isMovie}?fromAddon={fromAddon}",
                         arguments = listOf(
                             navArgument("mediaId") { type = NavType.IntType },
-                            navArgument("isMovie") { type = NavType.BoolType }
+                            navArgument("isMovie") { type = NavType.BoolType },
+                            navArgument("fromAddon") { type = NavType.BoolType; defaultValue = false }
                         )
                     ) { backStackEntry ->
                         DetailScreen(
                             mediaId = backStackEntry.arguments!!.getInt("mediaId"),
                             isMovie = backStackEntry.arguments!!.getBoolean("isMovie"),
+                            fromAddon = backStackEntry.arguments!!.getBoolean("fromAddon"),
                             navController = navController
                         )
                     }

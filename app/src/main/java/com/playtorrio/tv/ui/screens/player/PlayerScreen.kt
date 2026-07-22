@@ -2185,7 +2185,11 @@ private fun StreamSourcesPanel(state: PlayerUiState, viewModel: PlayerViewModel)
                                         onClick = {
                                             viewModel.switchToSource(source.index, userInitiated = true)
                                         },
-                                        focusRequester = if (index == 0 && !hasAddonSection) firstFocusRequester else null
+                                        // While the addon list is loading/empty its rows
+                                        // don't exist, so the extractor list must carry
+                                        // initial focus — otherwise the panel can't be
+                                        // navigated until the fetch finishes.
+                                        focusRequester = if (index == 0 && state.addonStreams.isEmpty()) firstFocusRequester else null
                                     )
                                 }
                             }
@@ -2195,7 +2199,7 @@ private fun StreamSourcesPanel(state: PlayerUiState, viewModel: PlayerViewModel)
             }
         }
 
-        LaunchedEffect(state.showSourcesPanel) {
+        LaunchedEffect(state.showSourcesPanel, state.isLoadingAddonStreams, state.addonStreams.size) {
             if (state.showSourcesPanel) {
                 delay(120)
                 try { firstFocusRequester.requestFocus() } catch (_: Exception) {}

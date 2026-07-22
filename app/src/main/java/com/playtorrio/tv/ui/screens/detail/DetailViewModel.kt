@@ -422,7 +422,12 @@ class DetailViewModel : ViewModel() {
                     return@launch
                 }
                 val addons = StremioAddonRepository.getAddons()
-                val streams = StremioService.getStreams(addons, "movie", imdbId)
+                // Progressive: each addon's streams appear as soon as it answers
+                // (a slow Torrentio no longer hides its tab or delays the rest).
+                val streams = StremioService.getStreams(addons, "movie", imdbId,
+                    onPartial = { partial ->
+                        _uiState.value = _uiState.value.copy(stremioStreams = partial)
+                    })
                 _uiState.value = _uiState.value.copy(
                     stremioStreams = streams,
                     isLoadingStremioStreams = false
@@ -443,7 +448,10 @@ class DetailViewModel : ViewModel() {
                 }
                 val videoId = "$imdbId:$season:$episode"
                 val addons = StremioAddonRepository.getAddons()
-                val streams = StremioService.getStreams(addons, "series", videoId)
+                val streams = StremioService.getStreams(addons, "series", videoId,
+                    onPartial = { partial ->
+                        _uiState.value = _uiState.value.copy(stremioStreams = partial)
+                    })
                 _uiState.value = _uiState.value.copy(
                     stremioStreams = streams,
                     isLoadingStremioStreams = false

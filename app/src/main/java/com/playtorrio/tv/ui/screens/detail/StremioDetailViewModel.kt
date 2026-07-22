@@ -97,9 +97,12 @@ class StremioDetailViewModel : ViewModel() {
                     val findResult = tmdbApi.findByExternalId(stremioId, tmdbKey)
                     val movie = findResult.movieResults.firstOrNull()
                     val tv = findResult.tvResults.firstOrNull()
+                    // fromAddon: the TMDB page then opens the source picker on
+                    // play (torrents + addon streams) in BOTH modes instead of
+                    // auto-racing extractors — addon content ignores the mode.
                     val route = when {
-                        movie != null -> "detail/${movie.id}/true"
-                        tv != null -> "detail/${tv.id}/false"
+                        movie != null -> "detail/${movie.id}/true?fromAddon=true"
+                        tv != null -> "detail/${tv.id}/false?fromAddon=true"
                         else -> null
                     }
                     if (route != null) {

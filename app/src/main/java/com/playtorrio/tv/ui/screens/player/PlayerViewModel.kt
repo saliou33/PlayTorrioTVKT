@@ -3078,7 +3078,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     var streams: List<com.playtorrio.tv.data.stremio.StremioStream> = emptyList()
                     outer@ for (id in candidateIds) {
                         for (t in candidateTypes) {
-                            streams = com.playtorrio.tv.data.stremio.StremioService.getStreams(addons, t, id, resumeAddonId)
+                            streams = com.playtorrio.tv.data.stremio.StremioService.getStreams(
+                                addons, t, id, resumeAddonId,
+                                onPartial = { partial ->
+                                    // Populate the panel as each addon answers.
+                                    _uiState.update { it.copy(addonStreams = partial) }
+                                }
+                            )
                             if (streams.isNotEmpty()) break@outer
                         }
                     }
