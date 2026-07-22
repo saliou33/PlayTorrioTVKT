@@ -63,15 +63,25 @@ fun AddonDirectoryScreen(
     var loading by remember { mutableStateOf(true) }
     var query by remember { mutableStateOf("") }
     var typeFilter by remember { mutableStateOf("All") }
+    var sortMode by remember { mutableStateOf("Featured") }
+    var browsableOnly by remember { mutableStateOf(false) }
+    var noSetupOnly by remember { mutableStateOf(false) }
+    // Curated rank from the official Stremio collection (lower = more featured).
+    var officialRank by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
     var installedIds by remember {
         mutableStateOf(StremioAddonRepository.getAddons().map { it.manifest.id }.toSet())
     }
     var installingUrl by remember { mutableStateOf<String?>(null) }
 
+    fun normUrl(u: String) = u.removeSuffix("/manifest.json").trimEnd('/')
+
     LaunchedEffect(addonId, type, catalogId) {
         loading = true
         val addon = StremioAddonRepository.getAddons().firstOrNull { it.manifest.id == addonId }
         entries = if (addon != null) StremioService.getAddonCatalog(addon, type, catalogId) else emptyList()
+        officialRank = runCatching {
+            StremioService.getOfficialCollectionUrls().withIndex().associate { (i, u) -> u to i }
+        }.getOrDefault(emptyMap())
         loading = false
     }
 
@@ -79,12 +89,25 @@ fun AddonDirectoryScreen(
     val availableTypes = remember(entries) {
         listOf("All") + entries.flatMap { it.manifest.types }.map { it.lowercase() }.distinct().sorted()
     }
-    val shown = remember(entries, query, typeFilter) {
+    val shown = remember(entries, query, typeFilter, sortMode, browsableOnly, noSetupOnly, officialRank) {
         entries.filter { e ->
             (typeFilter == "All" || e.manifest.types.any { it.equals(typeFilter, ignoreCase = true) }) &&
+                (!browsableOnly || e.manifest.catalogs.isNotEmpty()) &&
+                (!noSetupOnly || e.manifest.behaviorHints?.configurationRequired != true) &&
                 (query.isBlank() ||
                     e.manifest.name.contains(query.trim(), ignoreCase = true) ||
                     e.manifest.description.contains(query.trim(), ignoreCase = true))
+        }.let { list ->
+            when (sortMode) {
+                // Official-collection members first (in curated order), then A–Z.
+                "Featured" -> list.sortedWith(
+                    compareBy(
+                        { officialRank[normUrl(it.transportUrl)] ?: Int.MAX_VALUE },
+                        { it.manifest.name.lowercase() }
+                    )
+                )
+                else -> list.sortedBy { it.manifest.name.lowercase() }
+            }
         }
     }
 
@@ -130,22 +153,22 @@ fun AddonDirectoryScreen(
         // Type filter strip
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(availableTypes) { t ->
-                var focused by remember { mutableStateOf(false) }
-                val selected = typeFilter.equals(t, ignoreCase = true)
-                Text(
-                    text = t.replaceFirstChar { it.uppercase() },
-                    color = if (selected) Accent else Color.White.copy(0.75f),
-                    fontSize = 12.sp,
-                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(999.dp))
-                        .background(if (selected) Accent.copy(0.2f) else Surface)
-                        .border(if (focused) 2.dp else 1.dp, if (focused) Accent else Color.White.copy(0.12f), RoundedCornerShape(999.dp))
-                        .onFocusChanged { focused = it.isFocused }
-                        .clickable { typeFilter = t }
-                        .padding(horizontal = 12.dp, vertical = 6.dp)
-                )
+                FilterPill(
+                    label = t.replaceFirstChar { it.uppercase() },
+                    selected = typeFilter.equals(t, ignoreCase = true),
+                ) { typeFilter = t }
             }
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        // Sort + capability filters — no public download counts exist, so
+        // "Featured" ranks by the official Stremio collection's curated order.
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            item { FilterPill("★ Featured", sortMode == "Featured") { sortMode = "Featured" } }
+            item { FilterPill("A–Z", sortMode == "A–Z") { sortMode = "A–Z" } }
+            item { FilterPill("Browsable", browsableOnly) { browsableOnly = !browsableOnly } }
+            item { FilterPill("No setup", noSetupOnly) { noSetupOnly = !noSetupOnly } }
         }
 
         Spacer(Modifier.height(14.dp))
@@ -167,6 +190,7 @@ fun AddonDirectoryScreen(
                 items(shown, key = { it.transportUrl }) { entry ->
                     DirectoryRow(
                         entry = entry,
+                        featured = officialRank.containsKey(normUrl(entry.transportUrl)),
                         installed = entry.manifest.id in installedIds,
                         installing = installingUrl == entry.transportUrl,
                         onInstall = {
@@ -194,8 +218,27 @@ fun AddonDirectoryScreen(
 }
 
 @Composable
+private fun FilterPill(label: String, selected: Boolean, onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    Text(
+        text = label,
+        color = if (selected) Accent else Color.White.copy(0.75f),
+        fontSize = 12.sp,
+        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(if (selected) Accent.copy(0.2f) else Surface)
+            .border(if (focused) 2.dp else 1.dp, if (focused) Accent else Color.White.copy(0.12f), RoundedCornerShape(999.dp))
+            .onFocusChanged { focused = it.isFocused }
+            .clickable { onClick() }
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+    )
+}
+
+@Composable
 private fun DirectoryRow(
     entry: AddonCatalogEntry,
+    featured: Boolean,
     installed: Boolean,
     installing: Boolean,
     onInstall: () -> Unit,
@@ -224,8 +267,23 @@ private fun DirectoryRow(
                 .background(Color.White.copy(0.05f))
         )
         Column(Modifier.weight(1f)) {
-            Text(m.name, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
-                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(m.name, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                if (featured) {
+                    Text(
+                        "★ FEATURED",
+                        color = Color(0xFFFFD700),
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.5.sp,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color(0xFFFFD700).copy(alpha = 0.12f))
+                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                    )
+                }
+            }
             if (m.description.isNotBlank()) {
                 Text(m.description, color = Color.White.copy(0.55f), fontSize = 11.sp,
                     maxLines = 2, overflow = TextOverflow.Ellipsis)

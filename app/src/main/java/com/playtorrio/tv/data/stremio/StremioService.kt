@@ -241,6 +241,34 @@ object StremioService {
         null
     }
 
+    // ── Official Stremio collection (curated popularity signal) ───────────────
+
+    @Volatile
+    private var officialCollectionCache: Pair<Long, List<String>>? = null
+
+    /** Transport URLs (normalized, no /manifest.json) of the ~95 addons in the
+     *  official Stremio community collection, in curated order. Used by the
+     *  Addons+ directory as a "Featured" ranking — no public download counts
+     *  exist, but official-collection membership is the best quality signal. */
+    suspend fun getOfficialCollectionUrls(): List<String> = withContext(Dispatchers.IO) {
+        officialCollectionCache?.let { (at, urls) ->
+            if (System.currentTimeMillis() - at < 60 * 60_000L && urls.isNotEmpty()) return@withContext urls
+        }
+        runCatching {
+            val body = get("https://api.strem.io/addonscollection.json") ?: return@withContext emptyList()
+            val arr = org.json.JSONArray(body)
+            val urls = buildList {
+                for (i in 0 until arr.length()) {
+                    arr.getJSONObject(i).optString("transportUrl")
+                        .takeIf { it.isNotBlank() }
+                        ?.let { add(it.removeSuffix("/manifest.json").trimEnd('/')) }
+                }
+            }
+            if (urls.isNotEmpty()) officialCollectionCache = System.currentTimeMillis() to urls
+            urls
+        }.getOrDefault(emptyList())
+    }
+
     // ── Addon catalogs (directories of other addons) ──────────────────────────
 
     private data class AddonCatalogResponse(val addons: List<AddonCatalogEntry>? = null)

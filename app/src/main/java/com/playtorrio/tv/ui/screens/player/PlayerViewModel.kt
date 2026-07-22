@@ -3046,13 +3046,22 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun showSourcesPanel() {
         _uiState.update { it.copy(showSourcesPanel = true, showControls = false) }
         val s = _uiState.value
-        // Addon-origin: the panel lists the addon streams for THIS item, so
-        // fetch them on first open (episode-aware for series).
-        if (s.isAddonOrigin && s.addonStreams.isEmpty() && !s.isLoadingAddonStreams) {
-            val sid = resumeStremioId ?: return
+        // Fetch the addon streams for THIS item on first open — for addon-origin
+        // playback AND for TMDB titles (via their IMDB id), so the panel always
+        // shows addon alternatives alongside the app sources.
+        if (!s.isIptv && s.animeEmbeds == null && s.addonStreams.isEmpty() && !s.isLoadingAddonStreams) {
+            if (resumeStremioId == null && s.tmdbId <= 0) return
             _uiState.update { it.copy(isLoadingAddonStreams = true) }
             viewModelScope.launch {
                 try {
+                    val sid = resumeStremioId ?: runCatching {
+                        if (s.isMovie) TmdbClient.api.getMovieExternalIds(s.tmdbId, TmdbClient.API_KEY).imdbId
+                        else TmdbClient.api.getTvExternalIds(s.tmdbId, TmdbClient.API_KEY).imdbId
+                    }.getOrNull()?.takeIf { it.startsWith("tt") }
+                    if (sid.isNullOrBlank()) {
+                        _uiState.update { it.copy(isLoadingAddonStreams = false) }
+                        return@launch
+                    }
                     val addons = com.playtorrio.tv.data.stremio.StremioAddonRepository.getAddons()
                     // For series, streams are keyed by videoId (id:season:episode).
                     val candidateIds = buildList {
@@ -3061,7 +3070,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         ) add("$sid:${s.seasonNumber}:${s.episodeNumber}")
                         add(sid)
                     }
-                    val candidateTypes = listOf(resumeStremioType ?: "movie", "movie", "series", "channel", "tv").distinct()
+                    val candidateTypes = listOf(
+                        resumeStremioType ?: if (s.isMovie) "movie" else "series",
+                        "movie", "series", "channel", "tv"
+                    ).distinct()
                     var streams: List<com.playtorrio.tv.data.stremio.StremioStream> = emptyList()
                     outer@ for (id in candidateIds) {
                         for (t in candidateTypes) {
@@ -3085,9 +3097,16 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         if (s.isSwitchingSource || s.isSwitchingEpisode) return
         resumeStreamPickKey = stream.url ?: stream.infoHash
         resumeStreamPickName = stream.name ?: stream.title
+        stream.addonId?.takeIf { it.isNotBlank() }?.let { resumeAddonId = it }
         val resumePos = player?.currentPosition?.takeIf { it > 5_000L }
         _uiState.update {
-            it.copy(showSourcesPanel = false, isSwitchingSource = true, currentStreamPickKey = resumeStreamPickKey)
+            it.copy(
+                showSourcesPanel = false, isSwitchingSource = true,
+                currentStreamPickKey = resumeStreamPickKey,
+                // The user explicitly picked an addon stream — playback is
+                // addon-origin from here on (no extractor auto-fallback).
+                isAddonOrigin = true,
+            )
         }
         viewModelScope.launch {
             try {
@@ -3190,8 +3209,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val s = _uiState.value
         val url = currentStreamUrl
         when {
-            // Streaming with a TMDB id: re-run extraction for the current source.
-            s.isStreamingMode && !s.isIptv && s.tmdbId > 0 -> switchToSource(s.currentSourceIndex)
+            // Extractor streaming with a TMDB id: re-run extraction for the
+            // current source. Addon-origin retries its own URL below instead.
+            s.isStreamingMode && !s.isIptv && s.tmdbId > 0 && !s.isAddonOrigin -> switchToSource(s.currentSourceIndex)
             // Otherwise re-prepare whatever URL we were playing.
             url != null -> viewModelScope.launch(Dispatchers.Main) {
                 try {
@@ -3254,6 +3274,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             isSwitchingSource = false,
                             currentSourceIndex = sourceIdx,
                             isConnecting = true,
+                            // An extractor source is now playing — no longer addon-origin.
+                            isAddonOrigin = false,
+                            currentStreamPickKey = null,
                             connectionStatus = "Loading ${StreamExtractorService.SOURCES.find { it.index == sourceIdx }?.name ?: "source"}…"
                         )
                     }

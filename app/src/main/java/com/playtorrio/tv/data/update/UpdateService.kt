@@ -112,10 +112,16 @@ object UpdateService {
         try {
             val dir = File(context.getExternalFilesDir(null) ?: context.filesDir, "updates")
             if (!dir.exists()) dir.mkdirs()
-            // Wipe stale APKs to keep storage tidy
-            dir.listFiles()?.forEach { runCatching { it.delete() } }
 
             val outFile = File(dir, info.assetName)
+            // Reuse a fully-downloaded APK for this exact version (size match) so
+            // tapping "Update now" again doesn't re-download.
+            if (info.sizeBytes > 0 && outFile.exists() && outFile.length() == info.sizeBytes) {
+                onProgress(info.sizeBytes, info.sizeBytes)
+                return@withContext outFile
+            }
+            // Wipe stale/partial APKs to keep storage tidy
+            dir.listFiles()?.forEach { runCatching { it.delete() } }
             val req = Request.Builder()
                 .url(info.downloadUrl)
                 .header("User-Agent", "PlayTorrioTV-Updater")
