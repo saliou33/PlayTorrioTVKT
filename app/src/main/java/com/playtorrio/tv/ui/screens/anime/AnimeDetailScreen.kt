@@ -386,17 +386,21 @@ fun AnimeDetailScreen(
         }
 
         // ── Back button ───────────────────────────────────────────────────────
+        val backBtnFocusManager = androidx.compose.ui.platform.LocalFocusManager.current
         Box(Modifier.padding(16.dp)) {
             Button(
                 onClick = { navController.popBackStack() },
-                // NOT focusProperties { down = watchFr }: after returning from the
-                // player (activity recreated, list scroll restored) the Watch
-                // button may not be composed — a hard jump to its unattached
-                // FocusRequester fails and traps focus on this top button. Try
-                // the jump; fall back to normal spatial traversal.
+                // After returning from the player the Watch button may not be
+                // composed (list scroll restored), so a hard focus jump to it
+                // dead-ends. requestFocus() on an unattached requester silently
+                // no-ops in newer Compose, so the ONLY reliable move is
+                // focusManager.moveFocus — spatial traversal to whatever content
+                // is actually visible, with the Watch jump as a backup.
                 modifier = Modifier.size(40.dp).onPreviewKeyEvent { event ->
                     if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
-                        runCatching { watchFr.requestFocus() }.isSuccess
+                        val moved = backBtnFocusManager.moveFocus(FocusDirection.Down)
+                        if (!moved) runCatching { watchFr.requestFocus() }
+                        true
                     } else false
                 },
                 colors = ButtonDefaults.colors(
