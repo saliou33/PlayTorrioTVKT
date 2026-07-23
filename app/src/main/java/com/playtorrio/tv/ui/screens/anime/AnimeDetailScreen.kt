@@ -14,6 +14,11 @@ import androidx.compose.ui.*
 import androidx.compose.ui.draw.*
 import androidx.compose.ui.focus.*
 import androidx.compose.ui.graphics.*
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -384,7 +389,16 @@ fun AnimeDetailScreen(
         Box(Modifier.padding(16.dp)) {
             Button(
                 onClick = { navController.popBackStack() },
-                modifier = Modifier.size(40.dp).focusProperties { down = watchFr },
+                // NOT focusProperties { down = watchFr }: after returning from the
+                // player (activity recreated, list scroll restored) the Watch
+                // button may not be composed — a hard jump to its unattached
+                // FocusRequester fails and traps focus on this top button. Try
+                // the jump; fall back to normal spatial traversal.
+                modifier = Modifier.size(40.dp).onPreviewKeyEvent { event ->
+                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
+                        runCatching { watchFr.requestFocus() }.isSuccess
+                    } else false
+                },
                 colors = ButtonDefaults.colors(
                     containerColor = Color.Black.copy(0.6f),
                     focusedContainerColor = Purple.copy(0.5f),
