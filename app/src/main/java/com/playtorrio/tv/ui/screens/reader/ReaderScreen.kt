@@ -122,6 +122,11 @@ fun ReaderScreen(navController: NavController) {
     val scrollState = androidx.compose.foundation.lazy.rememberLazyListState()
     val scrollScope = rememberCoroutineScope()
 
+    // New chapter → scroll mode starts back at the top.
+    LaunchedEffect(readerState.chapterIndex) {
+        runCatching { scrollState.scrollToItem(0) }
+    }
+
     // Prefetch the next few pages into Coil's cache so paging/scrolling never
     // waits on a network fetch.
     LaunchedEffect(readerState.pageIndex, readerState.pageUrls.size) {
@@ -167,20 +172,22 @@ fun ReaderScreen(navController: NavController) {
                     }
                     Key.DirectionLeft -> when (mode) {
                         ReaderMode.PAGE -> { vm.prevPage(); resetPan(); scale = 1f; true }
-                        ReaderMode.SCROLL -> true
+                        ReaderMode.SCROLL -> { vm.prevChapter(); true }
                         ReaderMode.ZOOM -> true
                         ReaderMode.DRAG -> { offsetX += panStep(scale); true }
                     }
                     Key.DirectionRight -> when (mode) {
                         ReaderMode.PAGE -> { vm.nextPage(); resetPan(); scale = 1f; true }
-                        ReaderMode.SCROLL -> true
+                        ReaderMode.SCROLL -> { vm.nextChapter(); true }
                         ReaderMode.ZOOM -> true
                         ReaderMode.DRAG -> { offsetX -= panStep(scale); true }
                     }
                     Key.DirectionUp -> when (mode) {
                         ReaderMode.PAGE -> true
                         ReaderMode.SCROLL -> {
-                            scrollScope.launch { scrollState.animateScrollBy(-900f) }; true
+                            if (!scrollState.canScrollBackward) vm.prevChapter()
+                            else scrollScope.launch { scrollState.animateScrollBy(-900f) }
+                            true
                         }
                         ReaderMode.ZOOM -> {
                             scale = (scale * 1.25f).coerceAtMost(5f); true
@@ -190,7 +197,10 @@ fun ReaderScreen(navController: NavController) {
                     Key.DirectionDown -> when (mode) {
                         ReaderMode.PAGE -> true
                         ReaderMode.SCROLL -> {
-                            scrollScope.launch { scrollState.animateScrollBy(900f) }; true
+                            // At the very bottom, DOWN continues into the next chapter.
+                            if (!scrollState.canScrollForward) vm.nextChapter()
+                            else scrollScope.launch { scrollState.animateScrollBy(900f) }
+                            true
                         }
                         ReaderMode.ZOOM -> {
                             scale = (scale / 1.25f).coerceAtLeast(1f)
@@ -354,7 +364,7 @@ private fun ModeBanner(mode: ReaderMode, key: Int, modifier: Modifier = Modifier
     val alpha by animateFloatAsState(if (visible) 1f else 0f, tween(250), label = "ba")
     val text = when (mode) {
         ReaderMode.PAGE -> "OK → Scroll mode  •  ◀ ▶ change pages"
-        ReaderMode.SCROLL -> "▲ ▼ scroll  •  OK → Zoom mode"
+        ReaderMode.SCROLL -> "▲ ▼ scroll  •  ◀ ▶ chapters  •  OK → Zoom mode"
         ReaderMode.ZOOM -> "▲ zoom in  •  ▼ zoom out  •  OK → Drag mode"
         ReaderMode.DRAG -> "D-pad to pan  •  OK → back to Page mode"
     }
@@ -446,12 +456,32 @@ class ReaderViewModel : androidx.lifecycle.ViewModel() {
         }
     }
 
+    /** Chronologically NEXT chapter — respects the list's ordering direction
+     *  (sources usually list newest-first, where +1 would go backward). */
+    fun nextChapter() {
+        val s = state.value
+        if (s.isLoading) return
+        val target = s.chapterIndex + ReaderSession.forwardStep
+        if (target in ReaderSession.chapters.indices) loadChapter(target)
+    }
+
+    /** Chronologically PREVIOUS chapter; lands on its LAST page when paging
+     *  backwards feels natural (landAtEnd). */
+    fun prevChapter(landAtEnd: Boolean = false) {
+        val s = state.value
+        if (s.isLoading) return
+        val target = s.chapterIndex - ReaderSession.forwardStep
+        if (target in ReaderSession.chapters.indices) {
+            loadChapter(target, initialPage = if (landAtEnd) Int.MAX_VALUE else 0)
+        }
+    }
+
     fun nextPage() {
         val s = state.value
         if (s.pageIndex < s.pageUrls.size - 1) {
             state.value = s.copy(pageIndex = s.pageIndex + 1)
-        } else if (s.chapterIndex < ReaderSession.chapters.size - 1) {
-            loadChapter(s.chapterIndex + 1)
+        } else {
+            nextChapter()
         }
     }
 
@@ -459,8 +489,8 @@ class ReaderViewModel : androidx.lifecycle.ViewModel() {
         val s = state.value
         if (s.pageIndex > 0) {
             state.value = s.copy(pageIndex = s.pageIndex - 1)
-        } else if (s.chapterIndex > 0) {
-            loadChapter(s.chapterIndex - 1)
+        } else {
+            prevChapter(landAtEnd = true)
         }
     }
 }

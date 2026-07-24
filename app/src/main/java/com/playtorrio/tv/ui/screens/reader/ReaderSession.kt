@@ -26,6 +26,11 @@ object ReaderSession {
     @Volatile var comicSourceTag: String = ""
     @Volatile var comicSummary: String = ""
 
+    /** Index step that moves reading FORWARD (chronologically next chapter).
+     *  Sources usually list chapters newest-first, so +1 in list order would go
+     *  BACKWARD — inferred from the chapter numbers in the first/last titles. */
+    @Volatile var forwardStep: Int = 1
+
     fun set(
         source: Source,
         workKey: String,
@@ -46,5 +51,11 @@ object ReaderSession {
         this.startPageIndex = startPageIndex.coerceAtLeast(0)
         this.comicSourceTag = comicSourceTag
         this.comicSummary = comicSummary
+        this.forwardStep = run {
+            val nums = Regex("""\d+(?:\.\d+)?""")
+            val first = chapters.firstOrNull()?.title?.let { nums.find(it)?.value?.toDoubleOrNull() }
+            val last = chapters.lastOrNull()?.title?.let { nums.find(it)?.value?.toDoubleOrNull() }
+            if (first != null && last != null && first > last) -1 else 1
+        }
     }
 }
