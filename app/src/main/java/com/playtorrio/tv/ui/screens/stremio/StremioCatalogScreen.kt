@@ -152,17 +152,36 @@ fun StremioCatalogScreen(
                         color = Color.White.copy(alpha = 0.5f)
                     )
                     Spacer(Modifier.height(8.dp))
+                    // Multiple content types (multi-service manifests like Roxxy)
+                    // are grouped under type headers in the sidebar.
+                    val multiType = state.catalogs.map { it.type.lowercase() }.distinct().size > 1
                     LazyColumn(
                         modifier = Modifier.fillMaxSize().focusGroup(),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        items(state.catalogs.indices.toList()) { index ->
-                            val catalog = state.catalogs[index]
-                            CatalogMenuItem(
-                                catalog = catalog,
-                                isSelected = index == state.selectedCatalogIndex,
-                                onClick = { viewModel.selectCatalog(index) }
-                            )
+                        state.catalogs.forEachIndexed { index, catalog ->
+                            if (multiType && (index == 0 ||
+                                    !catalog.type.equals(state.catalogs[index - 1].type, ignoreCase = true))
+                            ) {
+                                item(key = "hdr_${catalog.type}_$index") {
+                                    Text(
+                                        text = catalog.type.uppercase(),
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            letterSpacing = 1.1.sp
+                                        ),
+                                        color = AccentSecondary.copy(alpha = 0.85f),
+                                        modifier = Modifier.padding(start = 10.dp, top = if (index == 0) 0.dp else 10.dp, bottom = 2.dp)
+                                    )
+                                }
+                            }
+                            item(key = "cat_${catalog.type}_${catalog.id}_$index") {
+                                CatalogMenuItem(
+                                    catalog = catalog,
+                                    isSelected = index == state.selectedCatalogIndex,
+                                    onClick = { viewModel.selectCatalog(index) }
+                                )
+                            }
                         }
                     }
                 }

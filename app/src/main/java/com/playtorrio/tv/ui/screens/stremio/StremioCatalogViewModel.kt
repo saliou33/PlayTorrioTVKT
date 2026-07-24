@@ -60,8 +60,10 @@ class StremioCatalogViewModel(
             }
 
         currentAddon = addon
-        val sameTypeCatalogs = addon.manifest.catalogs.filter { it.type.equals(type, ignoreCase = true) }
-        currentCatalogs = if (sameTypeCatalogs.isNotEmpty()) sameTypeCatalogs else addon.manifest.catalogs
+        // ALL catalogs, not just the entry type's — multi-service manifests
+        // (e.g. Roxxy) expose whole catalog groups per type, and filtering hid
+        // every group but the first. The sidebar groups them by type.
+        currentCatalogs = addon.manifest.catalogs
 
         if (currentCatalogs.isEmpty()) {
             _uiState.value = StremioCatalogUiState(
@@ -73,9 +75,11 @@ class StremioCatalogViewModel(
             return
         }
 
-        val initialIndex = currentCatalogs.indexOfFirst { it.id == catalogId }.let {
-            if (it >= 0) it else 0
-        }
+        // Prefer id+type match (ids can repeat across type groups), fall back to id.
+        val initialIndex = currentCatalogs.indexOfFirst {
+            it.id == catalogId && it.type.equals(type, ignoreCase = true)
+        }.let { if (it >= 0) it else currentCatalogs.indexOfFirst { c -> c.id == catalogId } }
+            .let { if (it >= 0) it else 0 }
 
         // If a previous VM instance for this exact route saved its selection into
         // the state bundle (activity/process recreated underneath us), restore
